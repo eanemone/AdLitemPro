@@ -1,0 +1,9 @@
+legal_db_vectors/** filter=lfs diff=lfs merge=lfs -text
+legal_docstore_fs/** filter=lfs diff=lfs merge=lfs -text
+*.pkl filter=lfs diff=lfs merge=lfs -text
+legal_db_vectors/* filter=lfs diff=lfs merge=lfs -text
+legal_docstore_fs/* filter=lfs diff=lfs merge=lfs -text
+legal_db_vectors/**/*.sqlite3 filter=lfs diff=lfs merge=lfs -text
+legal_db_vectors/**/*.bin filter=lfs diff=lfs merge=lfs -text
+legal_db_vectors/**/*.pkl filter=lfs diff=lfs merge=lfs -text
+legal_docstore_fs/**/* filter=lfs diff=lfs merge=lfs -text

@@ -1,0 +1,28 @@
+.env
+.streamlit/
+__pycache__/
+legal_db_vectors/
+legal_docstore_fs/
+autoname2.py
+make-pickle.py
+rebuild-db copy.py
+rebuild-db.py
+App-logo.png
+Backup/
+Published/
+Unpublished/
+venv/
+autoname.py
+prepare-ocr.py
+Legal Research.command
+*.so
+CIC Manual/
+DCF Policy/
+Reference/
+NJAC/
+Statutes/
+db-diagnose.py
+njac-scraper.py
+njsa-scrape-title9.py
+njsa-scrape-title30.py
+OpenAI-API.rtf
