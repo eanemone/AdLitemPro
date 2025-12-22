@@ -169,7 +169,7 @@ def enforce_citations(text: str) -> str:
     text = re.sub(r'(N\.J\.|Super\.)\s*\n\s*(\d+)', r'\1 \2', text, flags=re.IGNORECASE)
     
     # 1b. Fix Complex Case Splits (e.g. "v. Party \n in re Child")
-    # This specifically fixes the issue seen in your sample.docx
+    # This specifically fixes the issue seen in your PDF
     text = re.sub(r'(v\..*?)\s*\n\s*(in re)', r'\1 \2', text, flags=re.IGNORECASE)
 
     # 2. NORMALIZE FORMATS
