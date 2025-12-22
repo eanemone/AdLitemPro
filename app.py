@@ -35,8 +35,8 @@ DOC_STORE_PATH = os.path.join(BASE_DIR, "legal_docstore_fs")
 BM25_PATH = os.path.join(BASE_DIR, "bm25_retriever.pkl")
 COLLECTION_NAME = "legal_cases_eyecite"
 
-PREFERRED_MODEL = "gpt-5.2" 
-TEMPERATURE = 0.7 
+PREFERRED_MODEL = "gpt-4o" 
+TEMPERATURE = 0.4 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AdLitemPro")
@@ -89,7 +89,9 @@ st.markdown("""
     .brief-answer { background-color: #F8FAFC; color: #0F172A; padding: 24px; border-bottom: 2px solid #38BDF8; font-family: 'Georgia', serif; font-size: 1.05rem; line-height: 1.6; }
     .discussion-box { background-color: #FFFFFF; color: #1E293B; padding: 32px; font-family: 'Georgia', serif; font-size: 1.1rem; line-height: 1.8; }
     .memo-header { color: #0369A1; font-weight: 800; font-size: 1.4rem; margin-top: 1.5rem; margin-bottom: 0.8rem; font-family: 'Helvetica Neue', sans-serif; text-transform: uppercase; letter-spacing: 0.03em; }
-    .inline-citation { color: #0284c7; font-weight: bold; font-size: 0.9em; }
+    
+    /* CITATION STYLING (The "Blue" Scannability) */
+    .inline-citation { color: #0284c7; font-weight: bold; font-size: 0.95em; }
 
     /* AUTHORITY LIST */
     .auth-item { border-left: 4px solid #38BDF8; background: #1E293B; padding: 15px; margin-bottom: 12px; border-radius: 0 4px 4px 0; }
@@ -152,13 +154,12 @@ def clean_llm_output(text: str) -> str:
     text = re.sub(r'\s*```$', '', text)
     return text.strip()
 
-# --- CLEANER & CITATION ENFORCER (UPDATED) ---
+# --- CLEANER & CITATION ENFORCER (EXPANDED FOR CASE LAW) ---
 def enforce_citations(text: str) -> str:
     # 1. Fix broken newlines in Statutes (N.J.S.A. \n 9:6)
     text = re.sub(r'(N\.J\.A\.C\.|N\.J\.S\.A\.|N\.J\.|N\.J\. Super\.)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
     
     # 2. Fix broken newlines in Case Names (N.J. Div. \n of Youth)
-    # This looks for "v." or "In re" followed by a newline and text, and joins them.
     text = re.sub(r'(v\.|In re)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
 
     # 3. Normalize "N.J. Admin. Code" -> "N.J.A.C."
@@ -174,14 +175,21 @@ def enforce_citations(text: str) -> str:
     policy_pattern = r'(?<!class="inline-citation">)(CP\s*&\s*P-[IVX\d\-\w]+)'
     text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
+    # 6. NEW: Highlight Case Citations (e.g., 205 N.J. 17)
+    # Looks for: Digits, space, N.J. or N.J. Super., space, digits
+    case_pattern = r'(?<!class="inline-citation">)(\d+\s+N\.J\.(?:\s+Super\.)?\s+\d+)'
+    text = re.sub(case_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
+    
     return text
 
 def strip_redundant_headers(text: str) -> str:
     lines = text.split('\n')
     cleaned_lines = []
-    redundant_pattern = re.compile(r'^[\*\#\s]*(Brief Answer|Discussion)[\*\#\s]*$', re.IGNORECASE)
+    # Strip any lines that look like "To:", "From:", or "Legal Research Memo"
+    header_junk = re.compile(r'^(To:|From:|Re:|Date:|Legal Research Memo).*', re.IGNORECASE)
+    
     for line in lines:
-        if redundant_pattern.match(line.strip()): continue
+        if header_junk.match(line.strip()): continue
         cleaned_lines.append(line)
     return "\n".join(cleaned_lines)
 
@@ -219,7 +227,7 @@ def create_docx(content: str) -> BytesIO:
         if header_re.search(line):
             doc.add_heading(header_re.search(line).group(1), level=1)
             continue
-        if line in ["BRIEF ANSWER", "DISCUSSION"]:
+        if line.upper() in ["QUESTION PRESENTED", "BRIEF ANSWER", "DISCUSSION"]:
             doc.add_heading(line, level=1)
             continue
 
@@ -424,7 +432,7 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     status.update(label=f"Found {len(st.session_state.last_sources)} authorities.", state="complete")
                     progress_bar.progress(70, text="Drafting Research Memo...")
 
-                    # --- SYSTEM PROMPT (AGRESSIVELY UPDATED FOR DEPTH) ---
+                    # --- SYSTEM PROMPT (STRICT FORMATTING) ---
                     llm = ChatOpenAI(model=PREFERRED_MODEL, temperature=TEMPERATURE)
                     sys_prompt = """You are a Senior Legal Research Attorney. Write a **comprehensive and heavily cited** Research Memo based ONLY on provided SOURCES.
 
@@ -433,9 +441,12 @@ Before drafting, interpret the query within the broader context of New Jersey ch
 Extract and apply the underlying legal principles from the most analogous sources.
 
 STRICT FORMATTING & CITATION RULES:
-1. **DISCUSSION SECTION MUST BE ROBUST**: Do not summarize briefly. Analyze conflicting authorities, synthesize rules, and discuss the application of statutes (N.J.S.A.), code (N.J.A.C.), and policy (CP&P) alongside case law.
-2. **CITATION DENSITY**: Every legal proposition, definition, or standard must be IMMEDIATELY followed by an inline citation to the specific source number or name. 
-3. **DO NOT SPLIT CITATIONS**: Keep case names and dockets on the same line.
+1. **NO MEMO HEADER**: DO NOT include a "To/From/Date" block. Start immediately with the header "QUESTION PRESENTED".
+2. **CITATION STYLE**: 
+   - Use standard inline citations (e.g., *Case Name*, 205 N.J. 17 (2011)).
+   - **DO NOT** use bracketed source numbers like [Source 1].
+   - **DO NOT** split citations across lines.
+3. **DISCUSSION**: Must be robust. Analyze conflicting authorities and synthesize rules.
 4. **UNPUBLISHED CASES**: Cite as "[Case Name], [Docket No.] (unpublished) (App. Div. [Year])". 
    - CRITICAL: If the text says it relies on a published case, append "(citing [Published Case Name])".
 5. **BLUEBOOK**: Use 'N.J.S.A.' and 'N.J.A.C.' (always with periods).
