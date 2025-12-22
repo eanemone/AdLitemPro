@@ -230,20 +230,18 @@ def create_docx(content: str) -> BytesIO:
     citation_re = re.compile(r'<span class="inline-citation">(.*?)</span>', re.IGNORECASE)
     bold_re = re.compile(r'\*\*(.*?)\*\*')
     
-    # --- UPDATED HEADER RECOGNITION LOGIC ---
     for line in full_text_lines:
         line = line.strip()
         if not line: continue
             
         # 1. Clean line for header checking (remove * # :)
-        # This fixes the issue where "**QUESTION PRESENTED**" was ignored
+        # This guarantees "Question Presented" gets header style even if AI returns "**Question Presented**"
         clean_header_check = re.sub(r'[\*\#\:]', '', line).strip().upper()
 
         if header_re.search(line):
             doc.add_heading(header_re.search(line).group(1), level=1)
             continue
             
-        # 2. Check strict list against cleaned line
         if clean_header_check in ["QUESTION PRESENTED", "BRIEF ANSWER", "DISCUSSION"]:
             doc.add_heading(clean_header_check, level=1)
             continue
@@ -449,7 +447,7 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     status.update(label=f"Found {len(st.session_state.last_sources)} authorities.", state="complete")
                     progress_bar.progress(70, text="Drafting Research Memo...")
 
-                    # --- SYSTEM PROMPT (STRICT FORMATTING) ---
+                    # --- SYSTEM PROMPT (CHAIN OF CUSTODY) ---
                     llm = ChatOpenAI(model=PREFERRED_MODEL, temperature=TEMPERATURE)
                     sys_prompt = """You are a Senior Legal Research Attorney. Write a **comprehensive and heavily cited** Research Memo based ONLY on provided SOURCES.
 
@@ -457,19 +455,16 @@ HERMENEUTIC REASONING RULE:
 Before drafting, interpret the query within the broader context of New Jersey child welfare law. 
 Extract and apply the underlying legal principles from the most analogous sources.
 
-RULES FOR CITATION (NON-NEGOTIABLE):
-1. **NO SOURCE NUMBERS**: You are strictly FORBIDDEN from using references like "[Source 1]", "(Source 3)", "[1]", etc.
-2. **FULL BLUEBOOK CITATIONS**: You must extract the full case name and citation from the source text and use it inline.
-   - Example: "The court found X. *DCPP v. A.B.*, 123 N.J. Super. 456 (App. Div. 2023)."
-   - If a specific page number is not available, omit it, but keep the reporter volume and page.
-3. **STATUTES & CODE**: Use "N.J.S.A. 9:6-8.21" or "N.J.A.C. 10:129-1.1".
-4. **UNPUBLISHED**: Use format: "*Case Name*, No. A-XXXX-XX (App. Div. Month Day, Year)".
-5. **BRIDGE CITATIONS (CRITICAL)**: If an unpublished case relies on a published precedent, you MUST cite the published precedent in a parenthetical.
-   - Example: "*DCPP v. A.B.*, No. A-1234-20 (App. Div. 2023) (citing *N.J. Div. of Youth & Family Servs. v. I.S.*, 202 N.J. 145 (2010))."
+CHAIN OF CUSTODY CITATION RULE (CRITICAL):
+The documents provided in your Context are mostly UNPUBLISHED CASES. They often quote Published Cases.
+1. **PRIMARY AUTHORITY**: You must cite the document provided in the context (the Unpublished Case) as the source of the rule.
+2. **BRIDGE CITATION**: If the unpublished case relies on a published case for a rule, you must format it as:
+   - *[Unpublished Case Name]*, [Docket] (App. Div. [Date]) (citing *[Published Case Name]*, [Citation]).
+3. **DO NOT** cite the published case as if you read it directly. You must show the "bridge" from the unpublished opinion.
 
 STRICT FORMATTING:
 1. **NO MEMO HEADER**: DO NOT include a "To/From/Date" block. Start immediately with the header "QUESTION PRESENTED".
-2. **DISCUSSION**: Must be robust. Analyze conflicting authorities and synthesize rules.
+2. **NO SOURCE NUMBERS**: Use full legal citations only.
 3. Use '===SECTION_BREAK===' ONLY once, after 'Brief Answer'."""
                     
                     chain = ChatPromptTemplate.from_messages([("system", sys_prompt), ("user", "CITATIONS: {citations}\n\nCONTEXT: {context}\n\nISSUE: {input}")]) | llm | StrOutputParser()
