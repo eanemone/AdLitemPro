@@ -36,7 +36,7 @@ BM25_PATH = os.path.join(BASE_DIR, "bm25_retriever.pkl")
 COLLECTION_NAME = "legal_cases_eyecite"
 
 PREFERRED_MODEL = "gpt-4o" 
-TEMPERATURE = 0.4  # Lowered slightly to reduce hallucinated formats
+TEMPERATURE = 0.4 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AdLitemPro")
@@ -417,7 +417,6 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                             if not docket:
                                 m = re.search(r'No\.\s*([\w-]+)', cite_str)
                                 docket = m.group(1) if m else cite_str
-                            # --- FIXED SCHOLAR LINK ---
                             link = f"https://scholar.google.com/scholar?hl=en&as_sdt=4%2C31&q={urllib.parse.quote(docket)}&oq="
                             
                         st.session_state.last_sources.append({"label": get_badge_label(meta), "title": title, "cite": cite_str, "snippet": content[:350], "link": link})
@@ -425,26 +424,21 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     status.update(label=f"Found {len(st.session_state.last_sources)} authorities.", state="complete")
                     progress_bar.progress(70, text="Drafting Research Memo...")
 
-                    # --- ENHANCED SYSTEM PROMPT ---
+                    # --- SYSTEM PROMPT (AGRESSIVELY UPDATED FOR DEPTH) ---
                     llm = ChatOpenAI(model=PREFERRED_MODEL, temperature=TEMPERATURE)
-                    sys_prompt = """You are a Senior Legal Research Attorney. Write a formal Research Memo based ONLY on provided SOURCES.
+                    sys_prompt = """You are a Senior Legal Research Attorney. Write a **comprehensive and heavily cited** Research Memo based ONLY on provided SOURCES.
 
 HERMENEUTIC REASONING RULE: 
 Before drafting, interpret the query within the broader context of New Jersey child welfare law. 
-If a specific fact pattern is not an exact match, extract and apply the underlying legal principles from the most analogous sources.
+Extract and apply the underlying legal principles from the most analogous sources.
 
-STRICT FORMATTING RULES:
-1. No memo headers. Start at 'Question Presented'.
-2. Wrap all main section headers in <div class="memo-header">HEADER TEXT</div>.
-3. For claims, use inline citations: <span class="inline-citation">Bluebook Cite</span>.
-4. DO NOT SPLIT CITATIONS ACROSS LINES. Keep case names and dockets on the same line.
-5. STRICT BLUEBOOK CITATIONS: Refer to statutes as 'N.J.S.A.' and administrative code as 'N.J.A.C.' (always with periods).
-
-CITATION FORMATTING FOR UNPUBLISHED CASES:
-- You must cite unpublished cases in this EXACT format:
-  "[Case Name], [Docket No.] (unpublished) (App. Div. [Year])"
-- CRITICAL: Read the text of the unpublished case carefully. If it explicitly states it relies on or distinguishes a published precedent (e.g. "We rely on [Case X]"), you MUST append "(citing [Published Case Name])" to the citation.
-- Example: "DCPP v. A.B., No. A-1234-20 (unpublished) (App. Div. 2022) (citing N.J. Div. of Youth & Family Servs. v. I.S.)."
+STRICT FORMATTING & CITATION RULES:
+1. **DISCUSSION SECTION MUST BE ROBUST**: Do not summarize briefly. Analyze conflicting authorities, synthesize rules, and discuss the application of statutes (N.J.S.A.), code (N.J.A.C.), and policy (CP&P) alongside case law.
+2. **CITATION DENSITY**: Every legal proposition, definition, or standard must be IMMEDIATELY followed by an inline citation to the specific source number or name. 
+3. **DO NOT SPLIT CITATIONS**: Keep case names and dockets on the same line.
+4. **UNPUBLISHED CASES**: Cite as "[Case Name], [Docket No.] (unpublished) (App. Div. [Year])". 
+   - CRITICAL: If the text says it relies on a published case, append "(citing [Published Case Name])".
+5. **BLUEBOOK**: Use 'N.J.S.A.' and 'N.J.A.C.' (always with periods).
 
 6. Use '===SECTION_BREAK===' ONLY once, after 'Brief Answer'."""
                     
