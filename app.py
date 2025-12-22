@@ -54,7 +54,6 @@ st.markdown("""
     .subtitle { font-size: 0.95rem; color: #94A3B8; text-align: center; margin-bottom: 2rem; font-weight: 400; letter-spacing: 0.05em; }
     
     /* --- 1. GLOBAL INPUT OVERRIDES (The Nuclear Option) --- */
-    /* This forces ALL text inputs and textareas to use Blue on Focus */
     input:focus, textarea:focus {
         border-color: #38BDF8 !important;
         box-shadow: 0 0 0 1px #38BDF8 !important;
@@ -62,21 +61,18 @@ st.markdown("""
     }
     
     /* --- 2. SPECIFIC CHAT INPUT TARGETING --- */
-    /* Target the container */
     [data-testid="stChatInput"] {
         border-color: #38BDF8 !important;
         background-color: transparent !important;
     }
     
-    /* Target the inner textarea specifically */
     [data-testid="stChatInput"] textarea {
-        caret-color: #38BDF8 !important; /* Blue cursor */
+        caret-color: #38BDF8 !important; 
     }
     
-    /* FORCE focus state on the chat input textarea */
     [data-testid="stChatInput"] textarea:focus {
         border-color: #38BDF8 !important;
-        box-shadow: 0 0 0 1px #38BDF8 !important; /* This replaces the red glow */
+        box-shadow: 0 0 0 1px #38BDF8 !important; 
     }
     
     /* --- 3. STANDARD INPUTS (Login, etc) --- */
@@ -158,17 +154,28 @@ def clean_llm_output(text: str) -> str:
     text = re.sub(r'\s*```$', '', text)
     return text.strip()
 
-# --- CLEANER & CITATION ENFORCER ---
+# --- CLEANER & CITATION ENFORCER (UPDATED) ---
 def enforce_citations(text: str) -> str:
+    # 1. Fix broken newlines
     text = re.sub(r'(N\.J\.A\.C\.|N\.J\.S\.A\.|N\.J\.|N\.J\. Super\.)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
+    
+    # 2. Normalize "N.J. Admin. Code" or "N.J. Admin. Code §" to "N.J.A.C."
+    text = re.sub(r'(?i)N\.?J\.?\s*Admin\.?\s*Code\s*§?\s*', 'N.J.A.C. ', text)
+
+    # 3. Normalize "NJAC" -> "N.J.A.C."
     text = re.sub(r'(?i)\bN\.?J\.?A\.?C\.?\s*(\d+[:\-])', r'N.J.A.C. \1', text)
+
+    # 4. Normalize "NJSA" -> "N.J.S.A."
     text = re.sub(r'(?i)\bN\.?J\.?S\.?A\.?\s*(\d+[:\-])', r'N.J.S.A. \1', text)
     
+    # 5. Highlight Statutes/Codes
     statute_pattern = r'(?<!class="inline-citation">)(N\.J\.A\.C\.|N\.J\.S\.A\.|N\.J\.|N\.J\. Super\.)\s*(\d+[:\-]\d+[\d\-\.\w]*)'
     text = re.sub(statute_pattern, r'<span class="inline-citation">\1 \2</span>', text, flags=re.IGNORECASE)
     
+    # 6. Highlight Policy
     policy_pattern = r'(?<!class="inline-citation">)(CP\s*&\s*P-[IVX\d\-\w]+)'
     text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
+    
     return text
 
 def strip_redundant_headers(text: str) -> str:
