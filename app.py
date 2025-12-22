@@ -68,7 +68,9 @@ st.markdown("""
     textarea:focus, input:focus {
         border-color: #38BDF8 !important;
         box-shadow: 0 0 0 1px #38BDF8 !important;
-        color: #0F172A !important;
+    }
+    textarea, input {
+        color: #FFFFFF !important;
     }
     /* Button Styling */
     .stButton button {
@@ -82,9 +84,12 @@ st.markdown("""
 
     /* MEMO STYLES */
     .memo-container { background: #FFFFFF; border-radius: 8px; border: 1px solid #E2E8F0; overflow: hidden; margin-bottom: 1.5rem; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
-    .brief-answer { background-color: #F8FAFC; color: #0F172A; padding: 24px; border-bottom: 2px solid #38BDF8; font-family: 'Georgia', serif; font-size: 1.05rem; line-height: 1.6; }
+    .section-header { background: linear-gradient(135deg, #0369A1 0%, #0284C7 100%); color: #FFFFFF; padding: 12px 24px; font-family: 'Helvetica Neue', sans-serif; font-size: 1.1rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; border-bottom: 3px solid #38BDF8; }
+    .question-presented { background-color: #F8FAFC; color: #0F172A; padding: 24px; border-bottom: 1px solid #E2E8F0; font-family: 'Georgia', serif; font-size: 1.05rem; line-height: 1.6; }
+    .brief-answer { background-color: #F8FAFC; color: #0F172A; padding: 24px; border-bottom: 1px solid #E2E8F0; font-family: 'Georgia', serif; font-size: 1.05rem; line-height: 1.6; }
     .discussion-box { background-color: #FFFFFF; color: #1E293B; padding: 32px; font-family: 'Georgia', serif; font-size: 1.1rem; line-height: 1.8; }
     .memo-header { color: #0369A1; font-weight: 800; font-size: 1.4rem; margin-top: 1.5rem; margin-bottom: 0.8rem; font-family: 'Helvetica Neue', sans-serif; text-transform: uppercase; letter-spacing: 0.03em; }
+    .subsection-header { color: #0369A1; font-weight: 700; font-size: 1.2rem; margin-top: 1.8rem; margin-bottom: 0.6rem; font-family: 'Helvetica Neue', sans-serif; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 2px solid #38BDF8; padding-bottom: 0.3rem; }
     .inline-citation { color: #0284c7; font-weight: bold; font-size: 0.9em; }
 
     /* AUTHORITY LIST */
@@ -251,15 +256,20 @@ def render_memo_ui(content: str, key_idx: int):
     # 2. Enforce Blue Citations
     content = enforce_citations(content)
     
-    # 3. Render HTML
+    # 3. Render HTML with proper section headers
     if "===SECTION_BREAK===" in content:
         parts = content.split("===SECTION_BREAK===")
-        brief = parts[0].strip()
-        disc = "".join(parts[1:]).strip()
+        question = parts[0].strip() if len(parts) > 0 else ""
+        brief = parts[1].strip() if len(parts) > 1 else ""
+        disc = parts[2].strip() if len(parts) > 2 else ""
         
         st.markdown(f'''
             <div class="memo-container">
+                <div class="section-header">Question Presented</div>
+                <div class="question-presented">{question}</div>
+                <div class="section-header">Brief Answer</div>
                 <div class="brief-answer">{brief}</div>
+                <div class="section-header">Discussion</div>
                 <div class="discussion-box">{disc}</div>
             </div>
         ''', unsafe_allow_html=True)
@@ -478,6 +488,17 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     llm = ChatOpenAI(model=PREFERRED_MODEL, temperature=TEMPERATURE)
                     sys_prompt = """You are a Senior Legal Research Attorney. Write a formal Research Memo based ONLY on provided SOURCES.
                     
+                    INTERPRETIVE APPROACH:
+                    Before drafting, engage in hermeneutic analysis:
+                    1. Consider the query holistically - understand the broader legal context and policy implications
+                    2. Examine each source in light of the whole legal framework
+                    3. Iteratively refine your understanding as you move between specific authorities and the general legal question
+                    4. Recognize that each statute, case, and policy exists within a larger interpretive tradition
+                    5. Identify tensions, ambiguities, and how different authorities inform each other
+                    6. Let your understanding deepen through recursive engagement with the sources and question
+                    
+                    This interpretive work is internal - do not explicitly reference this process in your memo. Your final analysis should reflect this deeper understanding while maintaining traditional legal memo structure.
+                    
                     STYLING RULES (CRITICAL):
                     1. You MUST cite your sources. Every claim must be followed by a citation from the provided CITATIONS list.
                     2. Format citations as: <span class="inline-citation">Actual Citation Text</span>. 
@@ -486,11 +507,53 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     5. Use the EXACT citation text provided in the CITATIONS map - do not abbreviate or modify it.
                     6. When citing policies, use the format 'CP&P-[section]' (e.g., CP&P-IV-E-1-1100).
                     7. When citing the CIC Manual, use 'CIC Manual § [section]' (e.g., CIC Manual § 11.08).
+                    8. BLUEBOOK CITATION FORMAT: Always end sentences with a period BEFORE the citation. 
+                       CORRECT: "The court held that removal was improper. <span class="inline-citation">N.J.S.A. 9:6-8.21</span>"
+                       INCORRECT: "The court held that removal was improper <span class="inline-citation">N.J.S.A. 9:6-8.21</span>."
                     
-                    FORMAT:
-                    - Start with 'Question Presented'.
-                    - Use '===SECTION_BREAK===' after 'Brief Answer'.
-                    - Do NOT include headers like 'Brief Answer' or 'Discussion' in your text output (they are handled by the UI).
+                    MEMO STRUCTURE (MANDATORY):
+                    You MUST structure the memo with THREE sections separated by '===SECTION_BREAK===':
+                    
+                    1. QUESTION PRESENTED
+                       - State the legal question clearly and concisely
+                       - Do NOT include a header (the UI handles it)
+                    
+                    ===SECTION_BREAK===
+                    
+                    2. BRIEF ANSWER
+                       - Provide a direct yes/no or short answer
+                       - Include key reasoning in 2-3 sentences
+                       - Do NOT include a header (the UI handles it)
+                    
+                    ===SECTION_BREAK===
+                    
+                    3. DISCUSSION
+                       - Do NOT include a "Discussion" header (the UI handles it)
+                       - YOU MUST organize using these subsection headers:
+                         <div class="subsection-header">Rule</div>
+                         <div class="subsection-header">Analysis</div>
+                         <div class="subsection-header">Conclusion</div>
+                       - Rule: State the applicable legal standards and authorities
+                       - Analysis: Apply the law to the facts with detailed citation
+                       - Conclusion: Summarize the legal conclusion
+                    
+                    EXAMPLE OUTPUT STRUCTURE:
+                    Whether [legal question]?
+                    
+                    ===SECTION_BREAK===
+                    
+                    Yes/No. [Brief reasoning with key cite].
+                    
+                    ===SECTION_BREAK===
+                    
+                    <div class="subsection-header">Rule</div>
+                    [Legal standards and authorities]
+                    
+                    <div class="subsection-header">Analysis</div>
+                    [Detailed application with citations]
+                    
+                    <div class="subsection-header">Conclusion</div>
+                    [Final legal conclusion]
                     """
                     
                     chain = ChatPromptTemplate.from_messages([("system", sys_prompt), ("user", "CITATIONS: {citations}\n\nCONTEXT: {context}\n\nISSUE: {input}")]) | llm | StrOutputParser()
