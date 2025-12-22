@@ -8,7 +8,7 @@ import re
 import time
 from io import BytesIO
 
-# --- WORD DOC GENERATION ---
+# --- NEW: WORD DOC GENERATION ---
 from docx import Document
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -36,7 +36,7 @@ BM25_PATH = os.path.join(BASE_DIR, "bm25_retriever.pkl")
 COLLECTION_NAME = "legal_cases_eyecite"
 
 PREFERRED_MODEL = "gpt-4o" 
-TEMPERATURE = 0.1 
+TEMPERATURE = 0.4
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AdLitemPro")
@@ -44,251 +44,416 @@ logger = logging.getLogger("AdLitemPro")
 # --- UI SETUP ---
 st.set_page_config(page_title="AdLitem Pro", layout="wide", page_icon="⚖️")
 
-# --- CUSTOM CSS ---
+# --- CUSTOM CSS (NUCLEAR BLUE THEME) ---
 st.markdown("""
 <style>
     .stApp { max-width: 1100px; margin: 0 auto; }
-    .main-header { font-family: 'Helvetica Neue', sans-serif; font-size: 2.8rem; color: #FFFFFF; font-weight: 800; text-align: center; margin-bottom: 0.2rem; }
-    .subtitle { font-size: 0.95rem; color: #94A3B8; text-align: center; margin-bottom: 2rem; font-weight: 400; letter-spacing: 0.05em; text-transform: uppercase; }
     
-    /* INPUT BOX HIGHLIGHTS */
-    div[data-baseweb="input"]:focus-within { border-color: #38BDF8 !important; box-shadow: 0 0 0 1px #38BDF8 !important; }
-    .stButton button { border-color: #38BDF8 !important; color: #38BDF8 !important; }
+    /* BRANDING & HEADERS */
+    .main-header { font-family: 'Helvetica Neue', sans-serif; font-size: 2.8rem; color: #FFFFFF; font-weight: 800; text-align: center; margin-bottom: 0.2rem; }
+    .subtitle { font-size: 0.95rem; color: #94A3B8; text-align: center; margin-bottom: 2rem; font-weight: 400; letter-spacing: 0.05em; }
+    
+    /* --- AGGRESSIVE INPUT STYLING (THE RED KILLER) --- */
+    /* Target the Chat Input specifically */
+    div[data-testid="stChatInput"] textarea:focus {
+        border-color: #38BDF8 !important;
+        box-shadow: 0 0 0 1px #38BDF8 !important;
+    }
+    /* Target standard text inputs */
+    div[data-baseweb="input"]:focus-within {
+        border-color: #38BDF8 !important;
+        box-shadow: 0 0 0 1px #38BDF8 !important;
+    }
+    /* Target ALL textareas and inputs just to be safe */
+    textarea:focus, input:focus {
+        border-color: #38BDF8 !important;
+        box-shadow: 0 0 0 1px #38BDF8 !important;
+        color: #0F172A !important;
+    }
+    /* Button Styling */
+    .stButton button {
+        border-color: #38BDF8 !important;
+        color: #38BDF8 !important;
+    }
+    .stButton button:hover {
+        border-color: #0EA5E9 !important;
+        color: #0EA5E9 !important;
+    }
 
     /* MEMO STYLES */
     .memo-container { background: #FFFFFF; border-radius: 8px; border: 1px solid #E2E8F0; overflow: hidden; margin-bottom: 1.5rem; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
     .brief-answer { background-color: #F8FAFC; color: #0F172A; padding: 24px; border-bottom: 2px solid #38BDF8; font-family: 'Georgia', serif; font-size: 1.05rem; line-height: 1.6; }
     .discussion-box { background-color: #FFFFFF; color: #1E293B; padding: 32px; font-family: 'Georgia', serif; font-size: 1.1rem; line-height: 1.8; }
-    .inline-citation { color: #0284c7; font-weight: 700; font-size: 0.95em; }
-    
-    /* SUGGESTION CARDS */
-    .card-tag { font-size: 0.65rem; font-weight: 800; color: #38BDF8; text-transform: uppercase; margin-bottom: 8px; letter-spacing: 0.05em; text-align: center; }
+    .memo-header { color: #0369A1; font-weight: 800; font-size: 1.4rem; margin-top: 1.5rem; margin-bottom: 0.8rem; font-family: 'Helvetica Neue', sans-serif; text-transform: uppercase; letter-spacing: 0.03em; }
+    .inline-citation { color: #0284c7; font-weight: bold; font-size: 0.9em; }
+
+    /* AUTHORITY LIST */
+    .auth-item { border-left: 4px solid #38BDF8; background: #1E293B; padding: 15px; margin-bottom: 12px; border-radius: 0 4px 4px 0; }
+    .auth-label { font-size: 0.7rem; font-weight: 800; color: #38BDF8; text-transform: uppercase; margin-bottom: 5px; letter-spacing: 0.05em; }
+    .auth-title { font-weight: 700; color: #F1F5F9; font-size: 1rem; margin-bottom: 2px; }
+    .auth-cite { color: #94A3B8; font-size: 0.85rem; font-style: italic; margin-bottom: 8px; }
+    .auth-snippet { color: #CBD5E1; font-size: 0.85rem; line-height: 1.4; border-top: 1px solid #334155; padding-top: 8px; margin-top: 8px; }
+    .scholar-link-inline { color: #38BDF8; text-decoration: none; font-size: 0.75rem; font-weight: 600; margin-left: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- AUTHENTICATION GATE ---
 def check_password():
-    if "password_correct" not in st.session_state:
-        st.session_state["password_correct"] = False
-    if "login_attempted" not in st.session_state:
-        st.session_state["login_attempted"] = False
-
     def password_entered():
-        st.session_state["login_attempted"] = True
-        user = st.session_state.get("username", "")
-        pwd = st.session_state.get("password", "")
-        if (user in st.secrets["passwords"] and pwd == st.secrets["passwords"][user]):
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]; del st.session_state["username"]
-        else:
-            st.session_state["password_correct"] = False
+        if "username" in st.session_state and "password" in st.session_state:
+            user = st.session_state["username"]
+            pwd = st.session_state["password"]
+            if (user in st.secrets["passwords"] and pwd == st.secrets["passwords"][user]):
+                st.session_state["password_correct"] = True
+                del st.session_state["password"]
+                del st.session_state["username"]
+            else:
+                st.session_state["password_correct"] = False
 
-    if st.session_state["password_correct"]: return True
+    credit_html = """<div style="text-align: center; margin-bottom: 15px;"><span style="font-family: 'Helvetica Neue', sans-serif; font-size: 0.75rem; color: #64748B; letter-spacing: 0.1em; text-transform: uppercase;">Created by <span style="color: #E2E8F0; font-weight: 600;">Ernest Anemone, Esq.</span></span></div>"""
 
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown('<div style="margin-top: 80px;"></div>', unsafe_allow_html=True)
-        st.markdown('<div class="main-header">AdLitem<span style="color:#38BDF8">Pro</span></div>', unsafe_allow_html=True)
-        st.markdown('<div style="text-align: center; margin-bottom: 15px;"><span style="color: #E2E8F0; font-weight: 600;">Ernest Anemone, Esq.</span></div>', unsafe_allow_html=True)
-        st.text_input("Username", key="username")
-        st.text_input("Password", type="password", on_change=password_entered, key="password")
-        if st.session_state["login_attempted"] and not st.session_state["password_correct"]:
+    if "password_correct" not in st.session_state:
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.markdown('<div style="margin-top: 80px;"></div>', unsafe_allow_html=True)
+            st.markdown('<div class="main-header">AdLitem<span style="color:#38BDF8">Pro</span></div>', unsafe_allow_html=True)
+            st.markdown(credit_html, unsafe_allow_html=True)
+            st.markdown('<div class="subtitle">AUTHORIZED PERSONNEL ONLY</div>', unsafe_allow_html=True)
+            st.text_input("Username", key="username")
+            st.text_input("Password", type="password", on_change=password_entered, key="password")
+        return False
+    elif not st.session_state["password_correct"]:
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.markdown('<div style="margin-top: 80px;"></div>', unsafe_allow_html=True)
+            st.markdown('<div class="main-header">AdLitem<span style="color:#38BDF8">Pro</span></div>', unsafe_allow_html=True)
+            st.markdown(credit_html, unsafe_allow_html=True)
+            st.markdown('<div class="subtitle">AUTHORIZED PERSONNEL ONLY</div>', unsafe_allow_html=True)
+            st.text_input("Username", key="username")
+            st.text_input("Password", type="password", on_change=password_entered, key="password")
             st.error("😕 Access Denied")
-    return False
+        return False
+    return True
 
-if not check_password(): st.stop()
+if not check_password():
+    st.stop()
 
 # --- UTILITIES ---
 def clean_plain_text(text: str) -> str:
     if not text: return ""
-    return re.sub(re.compile('<.*?>'), '', str(text)).strip()
+    clean = re.compile('<.*?>')
+    return re.sub(clean, '', str(text)).strip()
 
+def clean_llm_output(text: str) -> str:
+    text = re.sub(r'^```html\s*', '', text)
+    text = re.sub(r'\s*```$', '', text)
+    return text.strip()
+
+# --- HEADER CLEANER & CITATION ENFORCER ---
 def enforce_citations(text: str) -> str:
-    # Remove standalone parentheses from citations
-    text = re.sub(r'([a-z])\s*\(([^)]*?(?:N\.J\.|N\.J\.S\.A\.|N\.J\.A\.C\.|No\. A-).*?)\)[\.\s]*$', "\\1. \\2", text, flags=re.MULTILINE|re.IGNORECASE)
-    # Highlight Statutes & Bridges
-    stat_pat = r'(?<!class="inline-citation">)\b(N\.J\.A\.C\.|N\.J\.S\.A\.)\s*(\d+[:\-][\d\-\.\w]+)'
-    text = re.sub(stat_pat, r'<span class="inline-citation">\1 \2</span>', text, flags=re.IGNORECASE)
-    case_pat = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?(?:\d+[\u00A0\s]+N\.J\.|No\.\s+A-)[\d\w\-\.\u00A0\s,]+(?:\s*\([^)]+\))?(?:\s*\(citing.*?\))?)'
-    text = re.sub(case_pat, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
+    """Finds missed citations and wraps them in HTML span tags."""
+    statute_pattern = r'(?<!class="inline-citation">)(N\.J\.A\.C\.|N\.J\.S\.A\.|N\.J\.|N\.J\. Super\.)\s*(\d+[:\-]\d+[\d\-\.\w]*)'
+    text = re.sub(statute_pattern, r'<span class="inline-citation">\1 \2</span>', text, flags=re.IGNORECASE)
+    
+    policy_pattern = r'(?<!class="inline-citation">)(CP\s*&\s*P-[IVX\d\-\w]+)'
+    text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     return text
 
-# --- WORD DOC GENERATOR ---
+def strip_redundant_headers(text: str) -> str:
+    """Removes AI-generated headers (e.g. '**Brief Answer**') that duplicate our UI headers."""
+    lines = text.split('\n')
+    cleaned_lines = []
+    
+    # Matches: **Brief Answer**, ## Discussion, Brief Answer, etc.
+    redundant_pattern = re.compile(r'^[\*\#\s]*(Brief Answer|Discussion)[\*\#\s]*$', re.IGNORECASE)
+    
+    for line in lines:
+        if redundant_pattern.match(line.strip()):
+            continue # Skip this line
+        cleaned_lines.append(line)
+        
+    return "\n".join(cleaned_lines)
+
+# --- WORD DOC GENERATOR (WITH MARKDOWN PARSING) ---
 def create_docx(content: str) -> BytesIO:
     doc = Document()
-    doc.add_heading('Legal Research Memo', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    # Title
+    title = doc.add_heading('Legal Research Memo', 0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph(f"Generated by AdLitem Pro | {time.strftime('%B %d, %Y')}")
-    clean_content = enforce_citations(content)
-    for line in clean_content.split('\n'):
-        if any(h in line.upper() for h in ["QUESTION PRESENTED", "BRIEF ANSWER", "DISCUSSION"]):
-            doc.add_heading(line.strip(), level=1)
-        else:
-            p = doc.add_paragraph(clean_plain_text(line))
-            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-    buffer = BytesIO(); doc.save(buffer); buffer.seek(0)
+    doc.add_paragraph("__________________________________________________________________")
+
+    # Clean Content first (Remove duplicates)
+    content = strip_redundant_headers(content)
+
+    # Split content
+    parts = content.split("===SECTION_BREAK===")
+    full_text_lines = []
+    
+    if len(parts) > 1:
+        full_text_lines.append("BRIEF ANSWER")
+        full_text_lines.extend(parts[0].split('\n'))
+        full_text_lines.append("") 
+        full_text_lines.append("DISCUSSION")
+        full_text_lines.extend(parts[1].split('\n'))
+    else:
+        full_text_lines = content.split('\n')
+
+    # Regex Config
+    header_re = re.compile(r'<div class="memo-header">(.*?)</div>', re.IGNORECASE)
+    citation_re = re.compile(r'<span class="inline-citation">(.*?)</span>', re.IGNORECASE)
+    bold_re = re.compile(r'\*\*(.*?)\*\*') # Finds **Bold Text**
+    
+    for line in full_text_lines:
+        line = line.strip()
+        if not line: continue
+            
+        # Headers
+        if header_re.search(line):
+            doc.add_heading(header_re.search(line).group(1), level=1)
+            continue
+        if line in ["BRIEF ANSWER", "DISCUSSION"]:
+            doc.add_heading(line, level=1)
+            continue
+
+        # Clean HTML Citations for Word
+        clean_line = citation_re.sub(r'\1', line) 
+        clean_line = clean_plain_text(clean_line)
+        
+        # Paragraph + Markdown Bolding
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        
+        # Parse "**" bolding
+        segments = bold_re.split(clean_line)
+        for i, segment in enumerate(segments):
+            if not segment: continue
+            run = p.add_run(segment)
+            if i % 2 == 1: # Odd segments are inside **markers**
+                run.bold = True
+
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
     return buffer
 
 def render_memo_ui(content: str, key_idx: int):
-    formatted = enforce_citations(content)
-    if "===SECTION_BREAK===" in formatted:
-        parts = formatted.split("===SECTION_BREAK===")
-        st.markdown(f'<div class="memo-container"><div class="brief-answer">{parts[0]}</div><div class="discussion-box">{"".join(parts[1:])}</div></div>', unsafe_allow_html=True)
+    # 1. Strip redundant headers so UI is clean
+    content = strip_redundant_headers(content)
+    
+    # 2. Enforce Blue Citations
+    content = enforce_citations(content)
+    
+    # 3. Render HTML
+    if "===SECTION_BREAK===" in content:
+        parts = content.split("===SECTION_BREAK===")
+        brief = parts[0].strip()
+        disc = "".join(parts[1:]).strip()
+        
+        st.markdown(f'''
+            <div class="memo-container">
+                <div class="brief-answer">{brief}</div>
+                <div class="discussion-box">{disc}</div>
+            </div>
+        ''', unsafe_allow_html=True)
     else:
-        st.markdown(f'<div class="memo-container"><div class="discussion-box">{formatted}</div></div>', unsafe_allow_html=True)
-    st.download_button("📄 Download Memo", create_docx(content), file_name=f"Memo_{key_idx}.docx", key=f"dl_{key_idx}")
+        st.markdown(f'<div class="memo-container"><div class="discussion-box">{content}</div></div>', unsafe_allow_html=True)
+
+    # 4. Download Button
+    doc_file = create_docx(content)
+    st.download_button(
+        label="📄 Download Memo as Word Doc",
+        data=doc_file,
+        file_name=f"Legal_Memo_{key_idx}.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        key=f"dl_btn_{key_idx}"
+    )
+
+def get_badge_label(metadata):
+    dtype = metadata.get("type", "case")
+    if dtype == "policy": return "DCF POLICY"
+    if dtype == "statute": return "STATUTE"
+    if dtype == "cic_manual": return "CIC MANUAL"
+    return "PUBLISHED" if metadata.get("is_published") else "UNPUBLISHED"
+
+# --- NEW: HISTORY CONTEXTUALIZATION ---
+def rewrite_query(original_input, chat_history):
+    if not chat_history: return original_input
+    llm = ChatOpenAI(model=PREFERRED_MODEL, temperature=0.3)
+    prompt = f"Chat History:\n{chat_history}\n\nFollow-Up Input: {original_input}\n\nStandalone Question:"
+    return llm.invoke(prompt).content
 
 # --- DATABASE LOADING ---
 @st.cache_resource
 def get_retriever():
-    if not os.path.exists(ST_DB_PATH): return None
-    vectorstore = Chroma(collection_name=COLLECTION_NAME, embedding_function=OpenAIEmbeddings(), persist_directory=ST_DB_PATH)
-    fs = LocalFileStore(DOC_STORE_PATH); store = create_kv_docstore(fs)
-    pdr = ParentDocumentRetriever(vectorstore=vectorstore, docstore=store, child_splitter=RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=125), search_kwargs={"k": 20})
+    if not os.path.exists(ST_DB_PATH): 
+        return None
+    
+    vectorstore = Chroma(
+        collection_name=COLLECTION_NAME, 
+        embedding_function=OpenAIEmbeddings(), 
+        persist_directory=ST_DB_PATH
+    )
+    
+    fs = LocalFileStore(DOC_STORE_PATH)
+    store = create_kv_docstore(fs)
+    
+    pdr = ParentDocumentRetriever(
+        vectorstore=vectorstore, 
+        docstore=store, 
+        child_splitter=RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100),
+        search_kwargs={"k": 15}
+    )
+    
     if os.path.exists(BM25_PATH):
-        with open(BM25_PATH, "rb") as f:
-            bm25 = pickle.load(f)
-            return EnsembleRetriever(retrievers=[pdr, bm25], weights=[0.7, 0.3])
+        try:
+            with open(BM25_PATH, "rb") as f:
+                bm25 = pickle.load(f)
+                return EnsembleRetriever(retrievers=[pdr, bm25], weights=[0.7, 0.3])
+        except Exception:
+            return pdr
     return pdr
 
-# --- UI EXECUTION ---
+# --- MAIN APP UI ---
 st.markdown('<div class="main-header">AdLitem<span style="color:#38BDF8">Pro</span></div>', unsafe_allow_html=True)
 st.markdown('<div class="subtitle">NEW JERSEY CHILD WELFARE LAW RESEARCH ENGINE</div>', unsafe_allow_html=True)
 
 if "messages" not in st.session_state: st.session_state.messages = []
 if "last_sources" not in st.session_state: st.session_state.last_sources = []
 
-# --- LANDING PAGE SUGGESTION CARDS ---
+# --- LANDING PAGE ---
 if not st.session_state.messages:
-    st.markdown('<div style="height: 2vh;"></div>', unsafe_allow_html=True)
-    def set_prompt(text): st.session_state.messages.append({"role": "user", "content": text}); st.rerun()
+    st.markdown('<div style="height: 4vh;"></div>', unsafe_allow_html=True)
+    st.markdown("""<div style="text-align: center; margin-bottom: 40px;"><span style="font-family: 'Helvetica Neue', sans-serif; font-size: 0.85rem; color: #64748B; letter-spacing: 0.1em; text-transform: uppercase;">Created by <span style="color: #E2E8F0; font-weight: 600;">Ernest Anemone, Esq.</span></span></div>""", unsafe_allow_html=True)
+    st.markdown("""<div style="text-align: center; color: #94A3B8; margin-bottom: 30px; font-size: 0.9rem;">Select a sample fact pattern to test the research engine:</div>""", unsafe_allow_html=True)
     col1, col2, col3 = st.columns(3)
+    def set_prompt(text): st.session_state.messages.append({"role": "user", "content": text})
+    
     with col1:
-        st.markdown('<div class="card-tag">Title 9 / Neglect</div>', unsafe_allow_html=True)
-        if st.button("🌿 Cannabis & Imminent Harm", use_container_width=True):
-            set_prompt("Analyze if a positive newborn toxicology for THC, absent evidence of parenting impairment, legally sustains a finding of abuse or neglect under Title 9. Cite CREAMMA and recent precedents.")
+        if st.button("🌿 Cannabis & 'Imminent Harm'", use_container_width=True):
+            set_prompt("Analyze the impact of the NJ CREAMMA Act on Title 9 litigation. Specifically: Does a positive newborn toxicology screen for THC, absent evidence of actual parenting impairment, legally sustain a finding of abuse or neglect? Cite recent Appellate Division precedents.")
+            st.rerun()
     with col2:
-        st.markdown('<div class="card-tag">TPR / KLG</div>', unsafe_allow_html=True)
-        if st.button("👨‍👩‍👧 KLG vs. Adoption", use_container_width=True):
-            set_prompt("Analyze the 'clear and convincing' standard for KLG under the 2021 amendments. If a resource parent prefers adoption but is open to KLG, can the court grant KLG over DCPP's objection?")
+        if st.button("🚧 'Safety Plans' & Due Process", use_container_width=True):
+            set_prompt("Analyze the legality of DCPP 'Safety Protection Plans' that require a parent to leave the home under threat of removal. Does this constitute a 'constructive removal' requiring a Dodd hearing?")
+            st.rerun()
     with col3:
-        st.markdown('<div class="card-tag">Due Process</div>', unsafe_allow_html=True)
-        if st.button("🚧 Constructive Removal", use_container_width=True):
-            set_prompt("Analyze DCPP 'Safety Protection Plans' that require a parent to leave the home. Does this constitute a 'constructive removal' requiring a Dodd hearing under current NJ Law?")
+        if st.button("👨‍👩‍👧 KLG vs. Adoption Preference", use_container_width=True):
+            set_prompt("If a resource parent unequivocally prefers adoption, can the court still grant Kinship Legal Guardianship (KLG) to avoid Termination of Parental Rights (TPR)? Analyze the 'clear and convincing' evidence standard under the KLG Act amendments.")
+            st.rerun()
 
+# Render History
 for idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
-        if msg["role"] == "assistant": render_memo_ui(msg["content"], idx)
-        else: st.markdown(msg["content"])
+        if msg["role"] == "assistant":
+            render_memo_ui(msg["content"], idx)
+        else:
+            st.markdown(msg["content"])
 
-if prompt := st.chat_input("Start research task..."):
-    st.session_state.messages.append({"role": "user", "content": prompt}); st.rerun()
+# Input
+if prompt := st.chat_input("Start legal research task..."):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.rerun()
 
+# Execution
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     current_prompt = st.session_state.messages[-1]["content"]
     with st.chat_message("assistant"):
         retriever = get_retriever()
-        with st.status("Analyzing Legal Graph...") as status:
-            docs = retriever.invoke(current_prompt)
-            context_blocks = []
-            for i, doc in enumerate(docs):
-                meta = doc.metadata; content = clean_plain_text(doc.page_content)
-                bridge = meta.get("internal_cites", "N/A"); cite = meta.get("bluebook", "Authority")
-                context_blocks.append(f"SOURCE {i+1} [{cite}]:\nPRE-EXTRACTED BRIDGE AUTHORITIES: {bridge}\nTEXT CONTENT: {content}\n")
-                st.session_state.last_sources.append({"label": "RESEARCH", "title": cite, "cite": cite, "snippet": content[:300]})
-            
-            sys_prompt = """You are a Senior Legal Research Attorney specializing exclusively in New Jersey child welfare law, including abuse and neglect proceedings, Title 9 fact-finding, Title 30 guardianship, termination of parental rights, and related appellate practice.
+        if not retriever:
+            st.error("Database not found. Please check repository file structure.")
+        else:
+            progress_bar = st.progress(0, text="Analyzing request history...")
+            with st.status("Conducting Deep Research...", expanded=False) as status:
+                chat_history_str = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[:-1]])
+                search_query = rewrite_query(current_prompt, chat_history_str)
+                
+                try:
+                    progress_bar.progress(20, text="Querying database...")
+                    docs = retriever.invoke(search_query)
+                    supp_query = f"{search_query} DCF Policy CP&P N.J.A.C. N.J.S.A. Title 9 Title 30 CIC Manual"
+                    supplemental = retriever.invoke(supp_query)[:15]
+                    
+                    unique_docs = []
+                    seen = set()
+                    for d in (docs + supplemental):
+                        h = hash(d.page_content[:150])
+                        if h not in seen:
+                            seen.add(h)
+                            unique_docs.append(d)
+                    
+                    unique_docs = unique_docs[:30]
+                    context_blocks = []
+                    st.session_state.last_sources = []
+                    citation_map = {}
 
-PRIMARY TASK
-Produce a formal Legal Research Memorandum that answers the user’s query using ONLY the SOURCES provided by the retrieval system. You must not rely on prior knowledge, training data, common law assumptions, or unstated background law.
+                    progress_bar.progress(50, text="Sanitizing authorities...")
+                    for i, doc in enumerate(unique_docs):
+                        meta = doc.metadata
+                        cite_str = clean_plain_text(meta.get("bluebook", meta.get("source", "")))
+                        if ".pdf" in cite_str.lower() or ".txt" in cite_str.lower():
+                            if "cic" in cite_str.lower():
+                                sec = re.search(r'(\d+)[_.](\d+)', cite_str)
+                                cite_str = f"CIC Manual § {sec.group(1)}.{sec.group(2)}" if sec else "NJ DCF CIC Manual"
+                            else:
+                                cite_str = "NJ DCF Internal Policy"
+                        
+                        content = clean_plain_text(doc.page_content)
+                        title = clean_plain_text(meta.get("display_name", "Authority"))
+                        context_blocks.append(f"SOURCE {i+1} [{meta.get('type','case').upper()} - {cite_str}]:\n{content}\n")
+                        citation_map[i+1] = cite_str
+                        
+                        link = None
+                        if meta.get("type", "case") == "case":
+                            docket = meta.get("docket", "")
+                            if not docket:
+                                m = re.search(r'No\.\s*([\w-]+)', cite_str)
+                                docket = m.group(1) if m else cite_str
+                            link = f"https://scholar.google.com/scholar?q={urllib.parse.quote(docket)}"
+                            
+                        st.session_state.last_sources.append({"label": get_badge_label(meta), "title": title, "cite": cite_str, "snippet": content[:350], "link": link})
+                        
+                    status.update(label=f"Found {len(st.session_state.last_sources)} authorities.", state="complete")
+                    progress_bar.progress(70, text="Drafting Research Memo...")
 
-If a legal proposition is not supported by the provided SOURCES, you must not state it.
+                    llm = ChatOpenAI(model=PREFERRED_MODEL, temperature=TEMPERATURE)
+                    sys_prompt = """You are a Senior Legal Research Attorney. Write a formal Research Memo based ONLY on provided SOURCES.
+                    
+                    STYLING RULES (CRITICAL):
+                    1. You MUST cite your sources. Every claim must be followed by a citation from the provided CITATIONS list.
+                    2. Format citations as: <span class="inline-citation">Actual Citation Text</span>. 
+                    3. Do NOT use the word 'Cite' as a placeholder. Use the actual text (e.g., 'N.J.A.C. 10:122-4.1').
+                    4. DO NOT split citations across lines.
+                    
+                    FORMAT:
+                    - Start with 'Question Presented'.
+                    - Use '===SECTION_BREAK===' after 'Brief Answer'.
+                    - Do NOT include headers like 'Brief Answer' or 'Discussion' in your text output (they are handled by the UI).
+                    """
+                    
+                    chain = ChatPromptTemplate.from_messages([("system", sys_prompt), ("user", "CITATIONS: {citations}\n\nCONTEXT: {context}\n\nISSUE: {input}")]) | llm | StrOutputParser()
+                    response = chain.invoke({"input": search_query, "context": "\n\n".join(context_blocks), "citations": citation_map})
+                    
+                    clean_resp = clean_llm_output(response)
+                    progress_bar.progress(100, text="Memo Complete.")
+                    time.sleep(0.5)
+                    progress_bar.empty()
+                    st.session_state.messages.append({"role": "assistant", "content": clean_resp})
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"Error: {e}")
+                    progress_bar.empty()
 
-SCOPE AND JURISDICTION
-• Interpret all questions solely within the framework of New Jersey law.
-• Do not analogize to other jurisdictions unless explicitly contained in the SOURCES.
-• Federal law may be addressed only if it appears in the SOURCES and only as applied or referenced in New Jersey child welfare practice.
-
-HERMENEUTIC REASONING RULE
-Apply a hermeneutic circle:
-1. Identify the legal question implied by the facts, posture, or agency action.
-2. Interpret each source within the structure of New Jersey’s child welfare statutory and regulatory scheme as a whole.
-3. Reconcile apparent tensions among SOURCES rather than isolating quotations.
-4. When SOURCES are ambiguous, incomplete, or silent, state that explicitly.
-
-SOURCE DISCIPLINE (NON-NEGOTIABLE)
-• Every legal or procedural proposition must be supported by an inline citation.
-• Do not infer holdings, mandates, or legal standards not expressly stated.
-• Do not fill gaps with general legal knowledge.
-• If the SOURCES do not answer the question, say so.
-
-AUTHORITY CLASSIFICATION RULES
-Classify each SOURCE strictly by metadata:
-
-• type = "manual" or "policy":
-  – Treat as agency guidance, program guidance, or internal policy, depending on the document’s stated origin.
-  – These are not binding law.
-  – Use only to describe practice, procedure, or interpretation explicitly stated in the document.
-  – Do not assign agency authorship or legal force unless expressly stated in the SOURCE.
-
-• Absence of judicial or statutory metadata means the SOURCE is not legal authority.
-
-If no binding legal authority appears in the SOURCES, you must say so expressly.
-
-DUPLICATE SOURCE RULE
-If multiple records share the same parent_id or source filename, treat them as a single authority. Do not cite duplicates as independent support.
-
-CITATION RULES
-• Use Bluebook format as reflected in the SOURCES.
-• Embed citations immediately after the supported sentence using:
-  <span class="inline-citation">Bluebook Cite</span>
-• Do not batch citations or place them at paragraph ends.
-
-CITATION CONSTRUCTION RULE (CRITICAL)
-If the 'bluebook' metadata field is empty:
-• Construct the citation using the document’s exact title as reflected in display_name.
-• Do not prepend or append an agency name unless the SOURCE text explicitly identifies the promulgating entity.
-• Identify the document type (manual, policy) only if doing so does not imply legal authority.
-• Do not fabricate statutes, court rules, or case citations.
-
-Example:
-CIC Manual § 1108.
-
-AUTHORITY DISCLOSURE REQUIREMENT
-When relying on manuals or policies:
-• State explicitly that the authority reflects guidance or practice, not judicial mandate.
-• Do not imply court adoption unless the SOURCE expressly states it.
-
-STRICT FORMATTING RULES
-1. Do not include a memo title or introductory header.
-2. Begin the memorandum with “Question Presented.”
-3. Wrap each main section header exactly as follows:
-   <div class="memo-header">HEADER TEXT</div>
-4. Use this section order only:
-   Question Presented
-   Brief Answer
-   Facts
-   Discussion
-   Conclusion
-5. Insert the delimiter ===SECTION_BREAK=== exactly once and only immediately after the Brief Answer.
-6. Do not use bullet points in the Discussion section.
-7. Use formal legal prose only. No conversational language.
-
-ANALYTICAL DEPTH REQUIREMENTS
-• In the Discussion, explain how each cited authority applies to the legal question.
-• Distinguish binding authority from guidance.
-• Identify unresolved doctrinal gaps or conflicts if present in the SOURCES.
-• Maintain a neutral, analytical tone. Do not advocate.
-
-FAILURE MODES TO AVOID
-• Hallucinated law or facts
-• Institutional misattribution
-• Treating guidance as binding law
-• Overgeneralizing limited authority
-• Stating conclusions stronger than the SOURCES support
-
-OUTPUT
-Return only the completed Legal Research Memorandum. Do not include explanations, commentary, or meta-analysis."""
-
-            chain = ChatPromptTemplate.from_messages([("system", sys_prompt), ("user", "CONTEXT: {context}\n\nISSUE: {input}")]) | ChatOpenAI(model=PREFERRED_MODEL, temperature=TEMPERATURE) | StrOutputParser()
-            res = chain.invoke({"input": current_prompt, "context": "\n\n".join(context_blocks)})
-            st.session_state.messages.append({"role": "assistant", "content": res}); st.rerun()
+# Footer
+if st.session_state.last_sources:
+    st.markdown("---")
+    with st.expander("📚 View Authority Library", expanded=False):
+        for src in st.session_state.last_sources:
+            link = f'<a href="{src["link"]}" target="_blank" class="scholar-link-inline">View on Scholar ↗</a>' if src["link"] else ""
+            st.markdown(f'<div class="auth-item"><div class="auth-label">{src["label"]}{link}</div><div class="auth-title">{src["title"]}</div><div class="auth-cite">{src["cite"]}</div><div class="auth-snippet">"{src["snippet"]}..."</div></div>', unsafe_allow_html=True)
+    if st.button("🗑️ Clear Research Session", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.last_sources = []
+        st.rerun()
