@@ -17,10 +17,10 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 
-# --- CLASSIC COMPATIBILITY IMPORTS ---
-from langchain_classic.retrievers import ParentDocumentRetriever, EnsembleRetriever
-from langchain_classic.storage import LocalFileStore
-from langchain_classic.storage._lc_store import create_kv_docstore
+# --- STANDARD LANGCHAIN IMPORTS (FIXED) ---
+from langchain.retrievers import ParentDocumentRetriever, EnsembleRetriever
+from langchain.storage import LocalFileStore
+from langchain.storage._lc_store import create_kv_docstore
 from langchain_community.retrievers import BM25Retriever
 
 # --- CORE BUILDING BLOCKS ---
@@ -36,7 +36,7 @@ BM25_PATH = os.path.join(BASE_DIR, "bm25_retriever.pkl")
 COLLECTION_NAME = "legal_cases_eyecite"
 
 PREFERRED_MODEL = "gpt-4o" 
-TEMPERATURE = 0.3 # Lowered slightly for more statutory precision
+TEMPERATURE = 0.4
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AdLitemPro")
@@ -240,13 +240,9 @@ def render_memo_ui(content: str, key_idx: int):
 
 def get_badge_label(metadata):
     dtype = metadata.get("type", "case")
-    # Mapping new strict tags to labels
     if dtype == "policy": return "DCF POLICY"
-    if dtype in ["statute", "code"]: return "STATUTE/CODE"
-    if dtype == "manual": return "CIC MANUAL"
-    if dtype == "reference": return "REFERENCE GUIDE"
-    
-    # Case Fallback
+    if dtype == "statute": return "STATUTE"
+    if dtype == "cic_manual": return "CIC MANUAL"
     return "PUBLISHED" if metadata.get("is_published") else "UNPUBLISHED"
 
 # --- NEW: HISTORY CONTEXTUALIZATION ---
@@ -298,34 +294,10 @@ def get_retriever():
         try:
             with open(BM25_PATH, "rb") as f:
                 bm25 = pickle.load(f)
-                return EnsembleRetriever(retrievers=[pdr, bm25], weights=[0.6, 0.4]) # Increased BM25 weight slightly for Statutes
+                return EnsembleRetriever(retrievers=[pdr, bm25], weights=[0.7, 0.3])
         except Exception:
             return pdr
     return pdr
-
-# --- NEW HELPER: STRICT FILTERED RETRIEVAL ---
-def retrieve_with_filter(pdr, query, filter_dict, k=5):
-    """
-    1. Searches vectorstore for children matching the query AND filter.
-    2. Maps children to parent IDs.
-    3. Retrieves full parent documents from docstore.
-    """
-    # Fetch 3x children to ensure we find enough unique parents
-    child_docs = pdr.vectorstore.similarity_search(
-        query, 
-        k=k*3, 
-        filter=filter_dict
-    )
-    
-    # Map to Parent IDs (Deduplicate)
-    parent_ids = list(set([d.metadata.get("parent_id") for d in child_docs if "parent_id" in d.metadata]))[:k]
-    
-    if not parent_ids:
-        return []
-        
-    # Fetch Parents
-    parents = pdr.docstore.mget(parent_ids)
-    return [p for p in parents if p is not None]
 
 # --- MAIN APP UI ---
 st.markdown('<div class="main-header">AdLitem<span style="color:#38BDF8">Pro</span></div>', unsafe_allow_html=True)
@@ -411,14 +383,6 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
         else:
             progress_bar = st.progress(0, text="Analyzing request history...")
             
-            # EXTRACT CORE RETRIEVER (Unpack Ensemble if needed)
-            # We need the direct PDR to run .vectorstore.similarity_search() with filters
-            if isinstance(retriever, EnsembleRetriever):
-                # Assuming PDR is the first item (Index 0)
-                core_pdr = retriever.retrievers[0]
-            else:
-                core_pdr = retriever
-
             with st.status("Conducting Deep Research...", expanded=False) as status:
                 
                 # --- STEP 1: CONTEXTUALIZE ---
@@ -430,58 +394,26 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     status.update(label=f"Refined Query: {search_query[:50]}...")
 
                 try:
-                    # --- STEP 2: BUCKETED RETRIEVAL (STRICT METADATA) ---
-                    progress_bar.progress(20, text="Querying 4 data buckets...")
+                    # --- STEP 2: RETRIEVE (WITH AUTHORITY MIX + CIC MANUAL + TITLE 9) ---
+                    progress_bar.progress(20, text="Querying database...")
                     
-                    # BUCKET 1: CASES (Broad Search - uses BM25+Vector)
-                    # We use the full Ensemble here to catch specific terms in case law
-                    docs_cases = retriever.invoke(search_query)
-
-                    # BUCKET 2: LEGISLATION (Statutes & Code)
-                    # Filter: type is 'statute' OR 'code'
-                    docs_statutes = retrieve_with_filter(
-                        core_pdr, 
-                        search_query, 
-                        filter_dict={"type": {"$in": ["statute", "code"]}}, 
-                        k=4
-                    )
-
-                    # BUCKET 3: AGENCY POLICY (Manuals & Policies)
-                    # Filter: type is 'policy' OR 'manual'
-                    docs_policy = retrieve_with_filter(
-                        core_pdr, 
-                        search_query, 
-                        filter_dict={"type": {"$in": ["policy", "manual"]}}, 
-                        k=4
-                    )
+                    # Primary search
+                    docs = retriever.invoke(search_query)
                     
-                    # BUCKET 4: REFERENCE (Guides)
-                    # Filter: type is 'reference'
-                    docs_refs = retrieve_with_filter(
-                        core_pdr, 
-                        search_query, 
-                        filter_dict={"type": "reference"}, 
-                        k=2
-                    )
-
-                    # --- MERGE & BALANCE ---
-                    # We limit cases to 8 to leave room for the 10 other docs
-                    combined_results = (
-                        docs_cases[:8] + 
-                        docs_statutes + 
-                        docs_policy + 
-                        docs_refs
-                    )
+                    # Supplemental search (UPDATED to include TITLE 9)
+                    supp_query = f"{search_query} DCF Policy CP&P N.J.A.C. N.J.S.A. Title 9 Title 30 CIC Manual"
+                    supplemental = retriever.invoke(supp_query)[:15]
                     
                     # Deduplication
                     unique_docs = []
                     seen_content = set()
-                    for d in combined_results:
+                    for d in (docs + supplemental):
                         content_hash = hash(d.page_content[:150])
                         if content_hash not in seen_content:
                             seen_content.add(content_hash)
                             unique_docs.append(d)
                     
+                    unique_docs = unique_docs[:30] # Increased context window
                     context_blocks = []
                     st.session_state.last_sources = []
                     citation_map = {}
@@ -491,19 +423,27 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                         meta = doc.metadata
                         
                         # --- CITATION HYGIENE ---
-                        cite_str = clean_plain_text(meta.get("bluebook", meta.get("citation", "")))
+                        cite_str = clean_plain_text(meta.get("bluebook", meta.get("source", "")))
+                        
+                        # Fix PDF filenames & Special Handling for CIC Manuals
+                        if ".pdf" in cite_str.lower() or ".txt" in cite_str.lower():
+                            if "cic" in cite_str.lower():
+                                # Extract section number from filename like "CIC_Manual_1601_1" -> "1601.1"
+                                sec_match = re.search(r'(\d+)[_.](\d+)', cite_str)
+                                if sec_match:
+                                    cite_str = f"CIC Manual § {sec_match.group(1)}.{sec_match.group(2)}"
+                                else:
+                                    # Fallback simple number
+                                    sec_match_simple = re.search(r'(\d+)', cite_str)
+                                    if sec_match_simple:
+                                        cite_str = f"CIC Manual § {sec_match_simple.group(1)}"
+                                    else:
+                                        cite_str = "NJ DCF Concurrent Planning (CIC) Manual"
+                            else:
+                                cite_str = "NJ DCF Internal Policy / Administrative Record"
+                        
                         if not cite_str:
-                             cite_str = clean_plain_text(meta.get("source", "Unknown Authority"))
-
-                        # Special Handling for Policy IDs
-                        if meta.get("type") == "policy" and "policy_id" in meta:
-                            cite_str = f"NJ DCF Policy {meta['policy_id']}"
-                            
-                        # Special Handling for Statutes (Title 9 / Title 30)
-                        if meta.get("type") in ["statute", "code"]:
-                            # If we have a nice display_name from ingest, use it
-                            if meta.get("display_name"):
-                                cite_str = meta.get("display_name")
+                            cite_str = "Unknown Legal Authority"
 
                         content = clean_plain_text(doc.page_content)
                         title = clean_plain_text(meta.get("display_name", "Authority"))
@@ -515,10 +455,17 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                         
                         # Generate Link
                         link = None
-                        if meta.get("type") == "case":
-                            docket_match = re.search(r'A-\d+-\d+', cite_str)
-                            search_term = docket_match.group(0) if docket_match else cite_str
-                            link = f"https://scholar.google.com/scholar?q={urllib.parse.quote(search_term)}"
+                        if meta.get("type", "case") == "case":
+                            search_query_url = meta.get("docket", "")
+                            if not search_query_url:
+                                match = re.search(r'No\.\s*([\w-]+)', cite_str)
+                                search_query_url = match.group(1) if match else cite_str
+                            
+                            badge_label = get_badge_label(meta)
+                            if badge_label == "UNPUBLISHED":
+                                link = f"https://scholar.google.com/scholar?as_sdt=4,31&q={urllib.parse.quote(search_query_url)}"
+                            else:
+                                link = f"https://scholar.google.com/scholar?q={urllib.parse.quote(search_query_url)}"
 
                         st.session_state.last_sources.append({
                             "label": get_badge_label(meta),
@@ -531,31 +478,33 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     status.update(label=f"Found {len(st.session_state.last_sources)} authorities (Cases, Statutes, Policies).", state="complete")
                     progress_bar.progress(70, text="Drafting Research Memo...")
 
-                    # --- STEP 3: GENERATE ---
+                    # --- STEP 3: GENERATE (WITH STRICT PERIOD PLACEMENT) ---
                     llm = ChatOpenAI(model=PREFERRED_MODEL, temperature=TEMPERATURE)
                     sys_prompt = """You are a Senior Legal Research Attorney. Write a formal Research Memo based ONLY on provided SOURCES.
                     
-                    CRITICAL INSTRUCTION 1: CITATION HYGIENE
+                    CRITICAL GRAMMAR ENFORCEMENT (PERIOD PLACEMENT):
                     - You MUST place a period '.' immediately AFTER the legal claim, BEFORE opening the citation span.
-                    - Example: "The court disagreed. <span class="inline-citation">State v. Jones</span>."
-                    - Use the provided Source Names (e.g., 'CIC Manual § 1601.1', 'N.J.S.A. 9:6-8.21').
+                    - INCORRECT: "The court disagreed <span class="inline-citation">State v. Jones</span>."
+                    - INCORRECT: "The court disagreed <span class="inline-citation">State v. Jones</span>."
+                    - CORRECT: "The court disagreed. <span class="inline-citation">State v. Jones</span>."
                     
-                    CRITICAL INSTRUCTION 2: STATUTORY PRIORITY
-                    - If the Context includes a Statute (N.J.S.A.) or Code (N.J.A.C.), you MUST cite it first before discussing case law.
-                    - Explicitly mention if the statute defines the terms in question (e.g., "Abused or Neglected Child").
+                    CRITICAL INSTRUCTION 1: CITATION HYGIENE
+                    - NEVER cite a file path. Use the citation provided in the map (e.g., 'CIC Manual § 1601.1').
+                    - If a specific authority is not named, cite as 'NJ DCF Policy Manual' or 'Administrative Record'.
                     
-                    CRITICAL INSTRUCTION 3: POLICY INTEGRATION
-                    - If a DCF Policy or CIC Manual section is provided, discuss how it applies to the procedural aspect of the question.
+                    CRITICAL INSTRUCTION 2: PRECEDENTIAL VALUE
+                    - When citing an UNPUBLISHED opinion, you must check if it relies on a PUBLISHED case for the relevant point of law.
+                    - If so, append the published citation in a parenthetical. 
+                    - Example Format: *Div. v. A.B.*, No. A-1234-20 (Unpublished) (citing *Div. v. G.M.*, 198 N.J. 382).
                     
-                    FORMATTING:
-                    1. Question Presented
-                    2. Brief Answer (followed by ===SECTION_BREAK===)
-                    3. Discussion
+                    CRITICAL INSTRUCTION 3: DIVERSE AUTHORITIES
+                    - Integrate statutes (Title 9/30), Case Law, DCF Policies, and the CIC (Concurrent Planning) Manual if available.
                     
                     STRICT FORMATTING RULES:
-                    - Wrap main section headers in <div class="memo-header">HEADER TEXT</div>.
-                    - For citations, use inline spans <span class="inline-citation">Source Name</span>.
-                    """
+                    1. No memo headers. Start at 'Question Presented'.
+                    2. Wrap main section headers in <div class="memo-header">HEADER TEXT</div>.
+                    3. For claims, use inline citations: <span class="inline-citation">Bluebook Cite</span>.
+                    4. Use '===SECTION_BREAK===' ONLY once, after 'Brief Answer'."""
                     
                     chain_prompt = ChatPromptTemplate.from_messages([
                         ("system", sys_prompt),
