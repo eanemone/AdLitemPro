@@ -44,7 +44,7 @@ logger = logging.getLogger("AdLitemPro")
 # --- UI SETUP ---
 st.set_page_config(page_title="AdLitem Pro", layout="wide", page_icon="⚖️")
 
-# --- CUSTOM CSS (NUCLEAR BLUE THEME V3) ---
+# --- CUSTOM CSS (NUCLEAR BLUE THEME V3.1) ---
 st.markdown("""
 <style>
     .stApp { max-width: 1100px; margin: 0 auto; }
@@ -54,26 +54,25 @@ st.markdown("""
     .subtitle { font-size: 0.95rem; color: #94A3B8; text-align: center; margin-bottom: 2rem; font-weight: 400; letter-spacing: 0.05em; }
     
     /* --- TARGETED INPUT STYLING (FIX RED BORDER) --- */
-    /* 1. Target the outer container of the chat input */
+    /* 1. Generic Input/Textarea Focus (Covers standard Streamlit inputs) */
+    .stTextInput input:focus, 
+    .stTextArea textarea:focus {
+        border-color: #38BDF8 !important;
+        box-shadow: 0 0 0 1px #38BDF8 !important;
+    }
+
+    /* 2. Chat Input Specifics */
     [data-testid="stChatInput"] {
         border-color: #38BDF8 !important;
     }
     
-    /* 2. Target the actual text area inside the chat input when focused */
     [data-testid="stChatInput"] textarea:focus {
         border-color: #38BDF8 !important;
         box-shadow: 0 0 0 1px #38BDF8 !important; 
         outline: none !important;
     }
 
-    /* 3. General Input Focus Fallback */
-    input:focus, textarea:focus {
-        border-color: #38BDF8 !important;
-        box-shadow: 0 0 0 1px #38BDF8 !important;
-        outline: none !important;
-    }
-
-    /* Button Styling */
+    /* 3. Button Styling */
     .stButton button {
         border-color: #38BDF8 !important;
         color: #38BDF8 !important;
@@ -155,18 +154,36 @@ def clean_llm_output(text: str) -> str:
 # --- CLEANER & CITATION ENFORCER ---
 def enforce_citations(text: str) -> str:
     """
-    1. Removes newlines that break N.J.A.C./N.J.S.A. citations.
-    2. Finds missed citations and wraps them in HTML span tags.
+    1. Removes newlines that break citations.
+    2. Normalizes NJSA/NJAC to Bluebook (N.J.S.A. / N.J.A.C.).
+    3. Wraps them in HTML span tags.
     """
     # Fix broken newlines in citations (e.g., "N.J.A.C.\n10:122")
     text = re.sub(r'(N\.J\.A\.C\.|N\.J\.S\.A\.|N\.J\.|N\.J\. Super\.)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
 
-    # Wrap citations in span tags
+    # Normalize Admin Code: NJAC, N.J.A.C -> N.J.A.C.
+    # We look for "N", optional dots, "J", optional dots, "A", optional dots, "C", optional dots, then digits
+    text = re.sub(
+        r'(?i)\bN\.?J\.?A\.?C\.?\s*(\d+[:\-])', 
+        r'N.J.A.C. \1', 
+        text
+    )
+
+    # Normalize Statutes: NJSA, N.J.S.A -> N.J.S.A.
+    text = re.sub(
+        r'(?i)\bN\.?J\.?S\.?A\.?\s*(\d+[:\-])', 
+        r'N.J.S.A. \1', 
+        text
+    )
+
+    # Wrap normalized citations in span tags
     statute_pattern = r'(?<!class="inline-citation">)(N\.J\.A\.C\.|N\.J\.S\.A\.|N\.J\.|N\.J\. Super\.)\s*(\d+[:\-]\d+[\d\-\.\w]*)'
     text = re.sub(statute_pattern, r'<span class="inline-citation">\1 \2</span>', text, flags=re.IGNORECASE)
     
+    # Policy numbers
     policy_pattern = r'(?<!class="inline-citation">)(CP\s*&\s*P-[IVX\d\-\w]+)'
     text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
+    
     return text
 
 def strip_redundant_headers(text: str) -> str:
@@ -441,8 +458,9 @@ STRICT FORMATTING RULES:
 1. No memo headers. Start at 'Question Presented'.
 2. Wrap all main section headers in <div class="memo-header">HEADER TEXT</div>.
 3. For claims, use inline citations: <span class="inline-citation">Bluebook Cite</span>.
-4. NEVER cite PDF filenames. Extract primary law instead.
-5. Use '===SECTION_BREAK===' ONLY once, after 'Brief Answer'."""
+4. STRICT BLUEBOOK CITATIONS: Refer to statutes as 'N.J.S.A.' and administrative code as 'N.J.A.C.' (always with periods).
+5. NEVER cite PDF filenames. Extract primary law instead.
+6. Use '===SECTION_BREAK===' ONLY once, after 'Brief Answer'."""
                     
                     chain = ChatPromptTemplate.from_messages([("system", sys_prompt), ("user", "CITATIONS: {citations}\n\nCONTEXT: {context}\n\nISSUE: {input}")]) | llm | StrOutputParser()
                     response = chain.invoke({"input": search_query, "context": "\n\n".join(context_blocks), "citations": citation_map})
