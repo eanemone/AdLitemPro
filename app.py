@@ -339,7 +339,7 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     progress_bar.progress(70, text="Drafting Memo...")
 
                     # --- MODIFIED SYSTEM PROMPT ---
-                    sys_prompt = """You are a Senior Legal Research Attorney. Write a formal Research Memo based ONLY on provided SOURCES.
+                    sys_prompt = """You are an Appellate Law Clerk. Write a formal Research Memo based ONLY on provided SOURCES.
                     
                     INTERPRETIVE APPROACH:
                     Before drafting, engage in hermeneutic analysis:
