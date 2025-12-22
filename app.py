@@ -36,7 +36,7 @@ BM25_PATH = os.path.join(BASE_DIR, "bm25_retriever.pkl")
 COLLECTION_NAME = "legal_cases_eyecite"
 
 PREFERRED_MODEL = "gpt-4o" 
-TEMPERATURE = 0.3 
+TEMPERATURE = 0.2 # Lowered significantly for strict adherence
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AdLitemPro")
@@ -154,18 +154,22 @@ def clean_llm_output(text: str) -> str:
     text = re.sub(r'\s*```$', '', text)
     return text.strip()
 
-# --- CITATION STABILIZATION ENGINE (V3) ---
+# --- CITATION STABILIZATION ENGINE (V4 - THE "SUPER GLUE") ---
 def enforce_citations(text: str) -> str:
     # 0. NUCLEAR OPTION: Scrub any remaining [Source X]
     text = re.sub(r'\[Source \d+\]', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\(Source \d+\)', '', text, flags=re.IGNORECASE)
 
-    # 1. FIX SPLIT LINES
+    # 1. FIX SPLIT LINES (Aggressive)
     text = re.sub(r'(\bN\.?J\.?[SA]\.?[AC]\.?)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
     text = re.sub(r'(\bv\.|In re)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
     text = re.sub(r'(N\.J\.)\s*\n\s*(Super\.)', r'\1 \2', text, flags=re.IGNORECASE)
     text = re.sub(r'(\d+)\s*\n\s*(N\.J\.|Super\.)', r'\1 \2', text, flags=re.IGNORECASE)
     text = re.sub(r'(N\.J\.|Super\.)\s*\n\s*(\d+)', r'\1 \2', text, flags=re.IGNORECASE)
+    
+    # 1b. Fix Complex Case Splits (e.g. "v. Party \n in re Child")
+    # Matches: "v." + text + newline + "in re"
+    text = re.sub(r'(v\..*?)\s*\n\s*(in re)', r'\1 \2', text, flags=re.IGNORECASE)
 
     # 2. NORMALIZE FORMATS
     text = re.sub(r'(?i)N\.?J\.?\s*Admin\.?\s*Code\s*§?\s*', 'N.J.A.C. ', text)
@@ -182,12 +186,14 @@ def enforce_citations(text: str) -> str:
     policy_pattern = r'(?<!class="inline-citation">)\b(CP\s*&\s*P-[IVX\d\-\w]+)'
     text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
-    # 5. Highlight Published Cases WITH Name (e.g. *DCPP v. AB*, 205 N.J. 17)
-    case_pub_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?\d+\s+N\.J\.(?:\s+Super\.)?\s+\d+)'
+    # 5. Highlight Published Cases WITH Name 
+    # Matches: *Name*, Vol Reporter Page
+    case_pub_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?\d+\s+N\.J\.(?:\s+Super\.)?\s+\d+(?:\s*\(\w+\s+\d{4}\))?)'
     text = re.sub(case_pub_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
 
-    # 6. Highlight Unpublished/Docket WITH Name (e.g. *Case Name*, No. A-1234-20)
-    docket_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?No\.\s+A-\d+-\d+(?:T\d+)?)'
+    # 6. Highlight Unpublished/Docket WITH Name 
+    # Matches: *Name*, No. A-123 (App. Div. Date)
+    docket_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?No\.\s+A-\d+-\d+(?:T\d+)?(?:\s*\([^)]+\))?)'
     text = re.sub(docket_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
     return text
@@ -234,8 +240,6 @@ def create_docx(content: str) -> BytesIO:
         line = line.strip()
         if not line: continue
             
-        # 1. Clean line for header checking (remove * # :)
-        # This guarantees "Question Presented" gets header style even if AI returns "**Question Presented**"
         clean_header_check = re.sub(r'[\*\#\:]', '', line).strip().upper()
 
         if header_re.search(line):
@@ -451,21 +455,21 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     llm = ChatOpenAI(model=PREFERRED_MODEL, temperature=TEMPERATURE)
                     sys_prompt = """You are a Senior Legal Research Attorney. Write a **comprehensive and heavily cited** Research Memo based ONLY on provided SOURCES.
 
-HERMENEUTIC REASONING RULE: 
-Before drafting, interpret the query within the broader context of New Jersey child welfare law. 
-Extract and apply the underlying legal principles from the most analogous sources.
-
-CHAIN OF CUSTODY CITATION RULE (CRITICAL):
-The documents provided in your Context are mostly UNPUBLISHED CASES. They often quote Published Cases.
-1. **PRIMARY AUTHORITY**: You must cite the document provided in the context (the Unpublished Case) as the source of the rule.
-2. **BRIDGE CITATION**: If the unpublished case relies on a published case for a rule, you must format it as:
-   - *[Unpublished Case Name]*, [Docket] (App. Div. [Date]) (citing *[Published Case Name]*, [Citation]).
-3. **DO NOT** cite the published case as if you read it directly. You must show the "bridge" from the unpublished opinion.
-
 STRICT FORMATTING:
-1. **NO MEMO HEADER**: DO NOT include a "To/From/Date" block. Start immediately with the header "QUESTION PRESENTED".
+1. **NO MEMO HEADER**: Start immediately with the header "QUESTION PRESENTED".
 2. **NO SOURCE NUMBERS**: Use full legal citations only.
-3. Use '===SECTION_BREAK===' ONLY once, after 'Brief Answer'."""
+3. Use '===SECTION_BREAK===' ONLY once, after 'Brief Answer'.
+
+CITATION RULES (CRITICAL):
+1. **CHAIN OF CUSTODY**: The documents in your Context are UNPUBLISHED CASES.
+   - **DO NOT** cite a Published Case directly unless it appears as a primary source.
+   - **YOU MUST** cite the unpublished case in the text as the authority.
+   - **BRIDGE CITATION**: If the unpublished case relies on a published precedent, format it as:
+     *[Unpublished Case Name]*, [Docket] (App. Div. [Date]) (citing *[Published Case Name]*, [Citation]).
+   - FAILURE TO PROVIDE THIS BRIDGE CITATION IS A CRITICAL ERROR.
+
+2. **CITATION PLACEMENT**: Citations must be placed immediately following the proposition they support.
+3. **BLUEBOOK**: Use 'N.J.S.A.' and 'N.J.A.C.' (always with periods)."""
                     
                     chain = ChatPromptTemplate.from_messages([("system", sys_prompt), ("user", "CITATIONS: {citations}\n\nCONTEXT: {context}\n\nISSUE: {input}")]) | llm | StrOutputParser()
                     response = chain.invoke({"input": search_query, "context": "\n\n".join(context_blocks), "citations": citation_map})
