@@ -36,7 +36,7 @@ BM25_PATH = os.path.join(BASE_DIR, "bm25_retriever.pkl")
 COLLECTION_NAME = "legal_cases_eyecite"
 
 PREFERRED_MODEL = "gpt-4o" 
-TEMPERATURE = 0.2 
+TEMPERATURE = 0.1 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AdLitemPro")
