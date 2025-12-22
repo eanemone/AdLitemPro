@@ -36,7 +36,7 @@ BM25_PATH = os.path.join(BASE_DIR, "bm25_retriever.pkl")
 COLLECTION_NAME = "legal_cases_eyecite"
 
 PREFERRED_MODEL = "gpt-4o" 
-TEMPERATURE = 0.5 
+TEMPERATURE = 0.4  # Lowered slightly to reduce hallucinated formats
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AdLitemPro")
@@ -53,35 +53,33 @@ st.markdown("""
     .main-header { font-family: 'Helvetica Neue', sans-serif; font-size: 2.8rem; color: #FFFFFF; font-weight: 800; text-align: center; margin-bottom: 0.2rem; }
     .subtitle { font-size: 0.95rem; color: #94A3B8; text-align: center; margin-bottom: 2rem; font-weight: 400; letter-spacing: 0.05em; }
     
-    /* --- 1. GLOBAL INPUT OVERRIDES --- */
+    /* --- GLOBAL INPUT OVERRIDES --- */
     input:focus, textarea:focus {
         border-color: #38BDF8 !important;
         box-shadow: 0 0 0 1px #38BDF8 !important;
         outline: none !important;
     }
     
-    /* --- 2. SPECIFIC CHAT INPUT TARGETING --- */
+    /* --- CHAT INPUT TARGETING --- */
     [data-testid="stChatInput"] {
         border-color: #38BDF8 !important;
         background-color: transparent !important;
     }
-    
     [data-testid="stChatInput"] textarea {
         caret-color: #38BDF8 !important; 
     }
-    
     [data-testid="stChatInput"] textarea:focus {
         border-color: #38BDF8 !important;
         box-shadow: 0 0 0 1px #38BDF8 !important; 
     }
     
-    /* --- 3. STANDARD INPUTS --- */
+    /* --- STANDARD INPUTS --- */
     div[data-baseweb="input"]:focus-within {
         border-color: #38BDF8 !important;
         box-shadow: 0 0 0 1px #38BDF8 !important;
     }
     
-    /* --- 4. BUTTONS --- */
+    /* --- BUTTONS --- */
     .stButton button { border-color: #38BDF8 !important; color: #38BDF8 !important; }
     .stButton button:hover { border-color: #0EA5E9 !important; color: #0EA5E9 !important; }
     .stButton button:focus { border-color: #38BDF8 !important; color: #38BDF8 !important; box-shadow: 0 0 0 1px #38BDF8 !important; }
@@ -154,25 +152,25 @@ def clean_llm_output(text: str) -> str:
     text = re.sub(r'\s*```$', '', text)
     return text.strip()
 
-# --- CLEANER & CITATION ENFORCER ---
+# --- CLEANER & CITATION ENFORCER (UPDATED) ---
 def enforce_citations(text: str) -> str:
-    # 1. Fix broken newlines
+    # 1. Fix broken newlines in Statutes (N.J.S.A. \n 9:6)
     text = re.sub(r'(N\.J\.A\.C\.|N\.J\.S\.A\.|N\.J\.|N\.J\. Super\.)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
     
-    # 2. Normalize "N.J. Admin. Code" or "N.J. Admin. Code §" to "N.J.A.C."
+    # 2. Fix broken newlines in Case Names (N.J. Div. \n of Youth)
+    # This looks for "v." or "In re" followed by a newline and text, and joins them.
+    text = re.sub(r'(v\.|In re)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
+
+    # 3. Normalize "N.J. Admin. Code" -> "N.J.A.C."
     text = re.sub(r'(?i)N\.?J\.?\s*Admin\.?\s*Code\s*§?\s*', 'N.J.A.C. ', text)
-
-    # 3. Normalize "NJAC" -> "N.J.A.C."
     text = re.sub(r'(?i)\bN\.?J\.?A\.?C\.?\s*(\d+[:\-])', r'N.J.A.C. \1', text)
-
-    # 4. Normalize "NJSA" -> "N.J.S.A."
     text = re.sub(r'(?i)\bN\.?J\.?S\.?A\.?\s*(\d+[:\-])', r'N.J.S.A. \1', text)
     
-    # 5. Highlight Statutes/Codes
+    # 4. Highlight Statutes/Codes
     statute_pattern = r'(?<!class="inline-citation">)(N\.J\.A\.C\.|N\.J\.S\.A\.|N\.J\.|N\.J\. Super\.)\s*(\d+[:\-]\d+[\d\-\.\w]*)'
     text = re.sub(statute_pattern, r'<span class="inline-citation">\1 \2</span>', text, flags=re.IGNORECASE)
     
-    # 6. Highlight Policy
+    # 5. Highlight Policy
     policy_pattern = r'(?<!class="inline-citation">)(CP\s*&\s*P-[IVX\d\-\w]+)'
     text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
@@ -263,16 +261,13 @@ def render_memo_ui(content: str, key_idx: int):
         key=f"dl_btn_{key_idx}"
     )
 
-# --- UPDATED: BADGE LABEL LOGIC ---
 def get_badge_label(metadata):
-    dtype = metadata.get("type", "case").lower() # Normalize to lowercase
-    
+    dtype = metadata.get("type", "case").lower()
     if "policy" in dtype: return "DCF POLICY"
     if "statute" in dtype: return "STATUTE"
     if "code" in dtype: return "ADMIN CODE"
     if "manual" in dtype: return "CIC MANUAL"
     if "reference" in dtype: return "REFERENCE"
-    
     return "PUBLISHED" if metadata.get("is_published") else "UNPUBLISHED"
 
 # --- HISTORY CONTEXT ---
@@ -370,16 +365,11 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                 try:
                     progress_bar.progress(20, text="Executing stratified retrieval...")
                     
-                    # --- UPDATED: STRATIFIED RETRIEVAL STRATEGY ---
-                    # We now explicitly target tags found in your database (reference, manual, code)
-                    
-                    # 1. Cases (Broad & Specific)
+                    # 1. Cases
                     docs_cases = retriever.invoke(f"{search_query} case law appellate division precedent")
-                    
-                    # 2. Statutes/Codes (Targets 'code', 'statute' tags)
+                    # 2. Statutes/Codes
                     docs_statutes = retriever.invoke(f"{search_query} N.J.S.A. N.J.A.C. statute administrative code")
-                    
-                    # 3. Policy/Manuals (Targets 'policy', 'manual', 'reference' tags)
+                    # 3. Policy/Manuals
                     docs_policy = retriever.invoke(f"{search_query} DCF Policy CP&P CIC Manual internal procedures reference")
                     
                     # --- MERGE & DEDUPLICATE ---
@@ -408,16 +398,13 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     for i, doc in enumerate(unique_docs):
                         meta = doc.metadata
                         
-                        # Use bluebook if available, otherwise try display_name, then source
                         cite_str = clean_plain_text(meta.get("bluebook", ""))
                         if not cite_str:
                             cite_str = clean_plain_text(meta.get("display_name", meta.get("source", "Unknown Authority")))
                         
-                        # Clean up formatting for non-bluebook entries
                         if ".pdf" in cite_str.lower() or ".txt" in cite_str.lower():
-                            # Remove file extension for cleaner display
                             cite_str = re.sub(r'\.(pdf|txt)$', '', cite_str, flags=re.IGNORECASE)
-                            cite_str = cite_str.replace("_", " ") # "Division_Procedure" -> "Division Procedure"
+                            cite_str = cite_str.replace("_", " ")
                         
                         content = clean_plain_text(doc.page_content)
                         title = clean_plain_text(meta.get("display_name", "Authority"))
@@ -430,32 +417,33 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                             if not docket:
                                 m = re.search(r'No\.\s*([\w-]+)', cite_str)
                                 docket = m.group(1) if m else cite_str
-                            link = f"https://scholar.google.com/scholar?q={urllib.parse.quote(docket)}"
+                            # --- FIXED SCHOLAR LINK ---
+                            link = f"https://scholar.google.com/scholar?hl=en&as_sdt=4%2C31&q={urllib.parse.quote(docket)}&oq="
                             
                         st.session_state.last_sources.append({"label": get_badge_label(meta), "title": title, "cite": cite_str, "snippet": content[:350], "link": link})
                         
                     status.update(label=f"Found {len(st.session_state.last_sources)} authorities.", state="complete")
                     progress_bar.progress(70, text="Drafting Research Memo...")
 
-                    # --- SYSTEM PROMPT ---
+                    # --- ENHANCED SYSTEM PROMPT ---
                     llm = ChatOpenAI(model=PREFERRED_MODEL, temperature=TEMPERATURE)
                     sys_prompt = """You are a Senior Legal Research Attorney. Write a formal Research Memo based ONLY on provided SOURCES.
 
 HERMENEUTIC REASONING RULE: 
 Before drafting, interpret the query within the broader context of New Jersey child welfare law. 
-If a specific fact pattern (e.g., age, specific placement type) is not an exact match, do not lead with a 'no sources found' disclaimer. 
-Instead, extract and apply the underlying legal principles, standards of proof, and judicial reasoning from the sources that are most analogous to the user's issue.
+If a specific fact pattern is not an exact match, extract and apply the underlying legal principles from the most analogous sources.
 
 STRICT FORMATTING RULES:
 1. No memo headers. Start at 'Question Presented'.
 2. Wrap all main section headers in <div class="memo-header">HEADER TEXT</div>.
 3. For claims, use inline citations: <span class="inline-citation">Bluebook Cite</span>.
-4. STRICT BLUEBOOK CITATIONS: Refer to statutes as 'N.J.S.A.' and administrative code as 'N.J.A.C.' (always with periods).
+4. DO NOT SPLIT CITATIONS ACROSS LINES. Keep case names and dockets on the same line.
+5. STRICT BLUEBOOK CITATIONS: Refer to statutes as 'N.J.S.A.' and administrative code as 'N.J.A.C.' (always with periods).
 
 CITATION FORMATTING FOR UNPUBLISHED CASES:
 - You must cite unpublished cases in this EXACT format:
   "[Case Name], [Docket No.] (unpublished) (App. Div. [Year])"
-- CRITICAL: If the unpublished case relies on a specific published precedent to make its ruling, you MUST append "(citing [Published Case Name])" to the citation.
+- CRITICAL: Read the text of the unpublished case carefully. If it explicitly states it relies on or distinguishes a published precedent (e.g. "We rely on [Case X]"), you MUST append "(citing [Published Case Name])" to the citation.
 - Example: "DCPP v. A.B., No. A-1234-20 (unpublished) (App. Div. 2022) (citing N.J. Div. of Youth & Family Servs. v. I.S.)."
 
 6. Use '===SECTION_BREAK===' ONLY once, after 'Brief Answer'."""
