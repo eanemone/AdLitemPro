@@ -35,8 +35,8 @@ DOC_STORE_PATH = os.path.join(BASE_DIR, "legal_docstore_fs")
 BM25_PATH = os.path.join(BASE_DIR, "bm25_retriever.pkl")
 COLLECTION_NAME = "legal_cases_eyecite"
 
-PREFERRED_MODEL = "gpt-4o" 
-TEMPERATURE = 0.2 
+PREFERRED_MODEL = "gpt-5.2" 
+TEMPERATURE = 0.2  # Low temp for strict adherence
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AdLitemPro")
@@ -144,23 +144,22 @@ def enforce_citations(text: str) -> str:
     text = re.sub(r'\[Source \d+\]', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\(Source \d+\)', '', text, flags=re.IGNORECASE)
 
-    # 1. REMOVE PARENTHESES FROM STANDALONE CITATIONS
-    # Converts: "end of sentence (Citation)."  -->  "end of sentence. Citation."
-    # Matches: Any char(captured) + space + ( + citation text + ) + optional period
-    # Note: We must be careful not to strip legitimate parentheticals. 
-    # We look for parens containing "N.J.", "N.J.S.A.", "No. A-" to identify legal cites.
+    # 1. REMOVE PARENTHESES FROM STANDALONE CITES
+    # Converts: "sentence (Citation)." -> "sentence. Citation."
     text = re.sub(r'([a-z])\s*\(([^)]*?(?:N\.J\.|N\.J\.S\.A\.|N\.J\.A\.C\.|No\. A-).*?)\)[\.\s]*$', r'\1. \2', text, flags=re.MULTILINE|re.IGNORECASE)
     text = re.sub(r'([a-z])\s*\(([^)]*?(?:N\.J\.|N\.J\.S\.A\.|N\.J\.A\.C\.|No\. A-).*?)\)\s*$', r'\1. \2', text, flags=re.MULTILINE|re.IGNORECASE)
 
-    # 2. FIX SPLIT LINES
+    # 2. FIX SPLIT LINES (Aggressive Stitching)
+    # Fix "N.J.S.A. 9:6- \n 8.21"
+    text = re.sub(r'(N\.J\.S\.A\.|N\.J\.A\.C\.)\s*([\d\w:-]+)\s*-\s*\n\s*([\d\.]+)', r'\1 \2-\3', text, flags=re.IGNORECASE)
+    # Fix Standard Splits
     text = re.sub(r'(\bN\.?J\.?[SA]\.?[AC]\.?)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
     text = re.sub(r'(\bv\.|In re)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
     text = re.sub(r'(N\.J\.)\s*\n\s*(Super\.)', r'\1 \2', text, flags=re.IGNORECASE)
     text = re.sub(r'(\d+)\s*\n\s*(N\.J\.|Super\.)', r'\1 \2', text, flags=re.IGNORECASE)
     text = re.sub(r'(N\.J\.|Super\.)\s*\n\s*(\d+)', r'\1 \2', text, flags=re.IGNORECASE)
     text = re.sub(r'(v\..*?)\s*\n\s*(in re)', r'\1 \2', text, flags=re.IGNORECASE)
-    text = re.sub(r'(v\..*?)\s*\n\s*(Guardianship of)', r'\1 \2', text, flags=re.IGNORECASE)
-
+    
     # 3. NORMALIZE FORMATS
     text = re.sub(r'(?i)N\.?J\.?\s*Admin\.?\s*Code\s*§?\s*', 'N.J.A.C. ', text)
     text = re.sub(r'(?i)\bN\.?J\.?A\.?C\.?\s*(\d+[:\-])', r'N.J.A.C. \1', text)
@@ -168,8 +167,7 @@ def enforce_citations(text: str) -> str:
     
     # --- BLUE HIGHLIGHTING ---
     
-    # 4. Statutes/Codes (Expanded Range Support)
-    # Matches: N.J.S.A. 9:6-8.21 to -8.82 or et seq.
+    # 4. Statutes/Codes (With Ranges)
     statute_pattern = r'(?<!class="inline-citation">)\b(N\.J\.A\.C\.|N\.J\.S\.A\.)\s*(\d+[:\-][\d\-\.\w]+(?:\s+(?:to\s+)?-?[\d\-\.\w]+|\s+et\s+seq\.?)?)'
     text = re.sub(statute_pattern, r'<span class="inline-citation">\1 \2</span>', text, flags=re.IGNORECASE)
     
@@ -177,14 +175,11 @@ def enforce_citations(text: str) -> str:
     policy_pattern = r'(?<!class="inline-citation">)\b(CP\s*&\s*P-[IVX\d\-\w]+)'
     text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
-    # 6. Published Cases (Recursive "Citing" Support)
-    # Matches: *Case Name*, Citation (Year) (citing *Other Case*, Citation)
-    # The regex allows for an optional trailing parenthetical starting with "citing"
+    # 6. Published Cases (Recursive "Citing")
     case_pub_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?\d+\s+N\.J\.(?:\s+Super\.)?\s+\d+(?:\s*\(\w+\s+\d{4}\))?(?:\s*\(citing.*?\))?)'
     text = re.sub(case_pub_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
 
-    # 7. Unpublished Cases ("Bennett" Style + Bridge Citations)
-    # Matches: *Name*, No. A-123 (Date) (citing *Other*, Cit)
+    # 7. Unpublished Cases (Bennett Style)
     docket_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?No\.\s+A-[\d\w-]+(?:\s*\([^)]+\))?(?:\s*\(citing.*?\))?)'
     text = re.sub(docket_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
@@ -443,7 +438,7 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     status.update(label=f"Found {len(st.session_state.last_sources)} authorities.", state="complete")
                     progress_bar.progress(70, text="Drafting Research Memo...")
 
-                    # --- SYSTEM PROMPT (PERFECTIONIST) ---
+                    # --- SYSTEM PROMPT (PERFECTIONIST V6) ---
                     llm = ChatOpenAI(model=PREFERRED_MODEL, temperature=TEMPERATURE)
                     sys_prompt = """You are a Senior Legal Research Attorney. Write a **comprehensive and heavily cited** Research Memo based ONLY on provided SOURCES.
 
