@@ -36,7 +36,7 @@ BM25_PATH = os.path.join(BASE_DIR, "bm25_retriever.pkl")
 COLLECTION_NAME = "legal_cases_eyecite"
 
 PREFERRED_MODEL = "gpt-4o" 
-TEMPERATURE = 0.2  # CRITICAL: Lowered for strict formatting adherence
+TEMPERATURE = 0.2 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AdLitemPro")
@@ -132,34 +132,38 @@ def clean_llm_output(text: str) -> str:
 
 # --- HEADER CLEANER ---
 def clean_markdown_headers(text: str) -> str:
+    """Strips markdown styling from standard headers to ensure consistent formatting."""
     headers = ["QUESTION PRESENTED", "BRIEF ANSWER", "DISCUSSION", "ANALYSIS", "CONCLUSION"]
     for header in headers:
+        # Regex to find the header with any markdown fluff (*, #, _)
         pattern = re.compile(r'[\#\*\_]+' + re.escape(header) + r'[\#\*\_]*', re.IGNORECASE)
         text = re.sub(pattern, header, text)
     return text
 
-# --- CITATION PERFECTION ENGINE (V6) ---
+# --- CITATION PERFECTION ENGINE (V7 - NON-BREAKING SPACES) ---
 def enforce_citations(text: str) -> str:
     # 0. Scrub placeholders
     text = re.sub(r'\[Source \d+\]', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\(Source \d+\)', '', text, flags=re.IGNORECASE)
 
     # 1. REMOVE PARENTHESES FROM STANDALONE CITES
-    # Converts: "sentence (Citation)." -> "sentence. Citation."
     text = re.sub(r'([a-z])\s*\(([^)]*?(?:N\.J\.|N\.J\.S\.A\.|N\.J\.A\.C\.|No\. A-).*?)\)[\.\s]*$', r'\1. \2', text, flags=re.MULTILINE|re.IGNORECASE)
     text = re.sub(r'([a-z])\s*\(([^)]*?(?:N\.J\.|N\.J\.S\.A\.|N\.J\.A\.C\.|No\. A-).*?)\)\s*$', r'\1. \2', text, flags=re.MULTILINE|re.IGNORECASE)
 
-    # 2. FIX SPLIT LINES (Aggressive Stitching)
-    # Fix "N.J.S.A. 9:6- \n 8.21"
-    text = re.sub(r'(N\.J\.S\.A\.|N\.J\.A\.C\.)\s*([\d\w:-]+)\s*-\s*\n\s*([\d\.]+)', r'\1 \2-\3', text, flags=re.IGNORECASE)
-    # Fix Standard Splits
-    text = re.sub(r'(\bN\.?J\.?[SA]\.?[AC]\.?)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
-    text = re.sub(r'(\bv\.|In re)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
-    text = re.sub(r'(N\.J\.)\s*\n\s*(Super\.)', r'\1 \2', text, flags=re.IGNORECASE)
-    text = re.sub(r'(\d+)\s*\n\s*(N\.J\.|Super\.)', r'\1 \2', text, flags=re.IGNORECASE)
-    text = re.sub(r'(N\.J\.|Super\.)\s*\n\s*(\d+)', r'\1 \2', text, flags=re.IGNORECASE)
-    text = re.sub(r'(v\..*?)\s*\n\s*(in re)', r'\1 \2', text, flags=re.IGNORECASE)
-    text = re.sub(r'(v\..*?)\s*\n\s*(Guardianship of)', r'\1 \2', text, flags=re.IGNORECASE)
+    # 2. FIX SPLIT LINES & APPLY NON-BREAKING SPACES (\u00A0)
+    # This loop replaces standard spaces with Non-Breaking Spaces in critical patterns
+    
+    # 2a. Fix Statutes: "N.J.S.A. 9:6-8.21" -> "N.J.S.A.\u00A09:6-8.21"
+    text = re.sub(r'(N\.J\.S\.A\.|N\.J\.A\.C\.)\s*([\d\w:-]+)\s*-\s*\n\s*([\d\.]+)', r'\1\u00A0\2-\3', text, flags=re.IGNORECASE) # Fix mid-number split
+    text = re.sub(r'(\bN\.?J\.?[SA]\.?[AC]\.?)\s+([\d\w:\-\.]+)', r'\1\u00A0\2', text, flags=re.IGNORECASE)
+
+    # 2b. Fix Reporters: "205 N.J. 17" -> "205\u00A0N.J.\u00A017"
+    text = re.sub(r'(\d+)\s+(N\.J\.|Super\.)\s+(\d+)', r'\1\u00A0\2\u00A0\3', text, flags=re.IGNORECASE)
+    text = re.sub(r'(\d+)\s+(N\.J\.)\s+(Super\.)\s+(\d+)', r'\1\u00A0\2\u00A0\3\u00A0\4', text, flags=re.IGNORECASE)
+
+    # 2c. Fix "v." and "in re" with Non-Breaking Spaces
+    text = re.sub(r'(\bv\.)\s+', r'\1\u00A0', text, flags=re.IGNORECASE)
+    text = re.sub(r'(in\s+re)\s+', r'in\u00A0re\u00A0', text, flags=re.IGNORECASE)
 
     # 3. NORMALIZE FORMATS
     text = re.sub(r'(?i)N\.?J\.?\s*Admin\.?\s*Code\s*§?\s*', 'N.J.A.C. ', text)
@@ -168,7 +172,7 @@ def enforce_citations(text: str) -> str:
     
     # --- BLUE HIGHLIGHTING ---
     
-    # 4. Statutes/Codes (With Ranges)
+    # 4. Statutes/Codes (Expanded Range Support)
     statute_pattern = r'(?<!class="inline-citation">)\b(N\.J\.A\.C\.|N\.J\.S\.A\.)\s*(\d+[:\-][\d\-\.\w]+(?:\s+(?:to\s+)?-?[\d\-\.\w]+|\s+et\s+seq\.?)?)'
     text = re.sub(statute_pattern, r'<span class="inline-citation">\1 \2</span>', text, flags=re.IGNORECASE)
     
@@ -177,11 +181,10 @@ def enforce_citations(text: str) -> str:
     text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
     # 6. Published Cases (Recursive "Citing")
-    case_pub_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?\d+\s+N\.J\.(?:\s+Super\.)?\s+\d+(?:\s*\(\w+\s+\d{4}\))?(?:\s*\(citing.*?\))?)'
+    case_pub_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?\d+[\u00A0\s]+N\.J\.(?:[\u00A0\s]+Super\.)?[\u00A0\s]+\d+(?:\s*\(\w+\s+\d{4}\))?(?:\s*\(citing.*?\))?)'
     text = re.sub(case_pub_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
 
-    # 7. Unpublished Cases (Bennett Style + Bridge Citations)
-    # Matches: *Name*, No. A-123 (Date) (citing *Other*, Cit)
+    # 7. Unpublished Cases (Bennett Style)
     docket_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?No\.\s+A-[\d\w-]+(?:\s*\([^)]+\))?(?:\s*\(citing.*?\))?)'
     text = re.sub(docket_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
