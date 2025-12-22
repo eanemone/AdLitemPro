@@ -130,57 +130,62 @@ def clean_llm_output(text: str) -> str:
     text = re.sub(r'\s*```$', '', text)
     return text.strip()
 
-# --- NEW: HEADER CLEANER ---
+# --- HEADER CLEANER ---
 def clean_markdown_headers(text: str) -> str:
-    """Strips markdown styling from standard headers to ensure consistent formatting."""
-    # Matches: **QUESTION PRESENTED**, ## BRIEF ANSWER, etc.
     headers = ["QUESTION PRESENTED", "BRIEF ANSWER", "DISCUSSION", "ANALYSIS", "CONCLUSION"]
     for header in headers:
-        # Regex to find the header with any markdown fluff around it
         pattern = re.compile(r'[\#\*\_]+' + re.escape(header) + r'[\#\*\_]*', re.IGNORECASE)
-        # Replace with just the plain header
         text = re.sub(pattern, header, text)
     return text
 
-# --- CITATION STABILIZATION ENGINE (V5 - THE "BENNETT" FIX) ---
+# --- CITATION PERFECTION ENGINE (V6) ---
 def enforce_citations(text: str) -> str:
     # 0. Scrub placeholders
     text = re.sub(r'\[Source \d+\]', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\(Source \d+\)', '', text, flags=re.IGNORECASE)
 
-    # 1. FIX SPLIT LINES (Aggressive Stitching for Complex Cases)
+    # 1. REMOVE PARENTHESES FROM STANDALONE CITATIONS
+    # Converts: "end of sentence (Citation)."  -->  "end of sentence. Citation."
+    # Matches: Any char(captured) + space + ( + citation text + ) + optional period
+    # Note: We must be careful not to strip legitimate parentheticals. 
+    # We look for parens containing "N.J.", "N.J.S.A.", "No. A-" to identify legal cites.
+    text = re.sub(r'([a-z])\s*\(([^)]*?(?:N\.J\.|N\.J\.S\.A\.|N\.J\.A\.C\.|No\. A-).*?)\)[\.\s]*$', r'\1. \2', text, flags=re.MULTILINE|re.IGNORECASE)
+    text = re.sub(r'([a-z])\s*\(([^)]*?(?:N\.J\.|N\.J\.S\.A\.|N\.J\.A\.C\.|No\. A-).*?)\)\s*$', r'\1. \2', text, flags=re.MULTILINE|re.IGNORECASE)
+
+    # 2. FIX SPLIT LINES
     text = re.sub(r'(\bN\.?J\.?[SA]\.?[AC]\.?)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
     text = re.sub(r'(\bv\.|In re)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
     text = re.sub(r'(N\.J\.)\s*\n\s*(Super\.)', r'\1 \2', text, flags=re.IGNORECASE)
     text = re.sub(r'(\d+)\s*\n\s*(N\.J\.|Super\.)', r'\1 \2', text, flags=re.IGNORECASE)
     text = re.sub(r'(N\.J\.|Super\.)\s*\n\s*(\d+)', r'\1 \2', text, flags=re.IGNORECASE)
-    
-    # 1b. Complex Family Part Splits (e.g. "v. A.H. \n in re K.J.")
     text = re.sub(r'(v\..*?)\s*\n\s*(in re)', r'\1 \2', text, flags=re.IGNORECASE)
     text = re.sub(r'(v\..*?)\s*\n\s*(Guardianship of)', r'\1 \2', text, flags=re.IGNORECASE)
 
-    # 2. NORMALIZE FORMATS
+    # 3. NORMALIZE FORMATS
     text = re.sub(r'(?i)N\.?J\.?\s*Admin\.?\s*Code\s*§?\s*', 'N.J.A.C. ', text)
     text = re.sub(r'(?i)\bN\.?J\.?A\.?C\.?\s*(\d+[:\-])', r'N.J.A.C. \1', text)
     text = re.sub(r'(?i)\bN\.?J\.?S\.?A\.?\s*(\d+[:\-])', r'N.J.S.A. \1', text)
     
-    # --- BLUE HIGHLIGHTING (FULL CAPTURE) ---
+    # --- BLUE HIGHLIGHTING ---
     
-    # 3. Statutes & Policy
-    statute_pattern = r'(?<!class="inline-citation">)\b(N\.J\.A\.C\.|N\.J\.S\.A\.)\s*(\d+[:\-][\d\-\.\w]+)'
+    # 4. Statutes/Codes (Expanded Range Support)
+    # Matches: N.J.S.A. 9:6-8.21 to -8.82 or et seq.
+    statute_pattern = r'(?<!class="inline-citation">)\b(N\.J\.A\.C\.|N\.J\.S\.A\.)\s*(\d+[:\-][\d\-\.\w]+(?:\s+(?:to\s+)?-?[\d\-\.\w]+|\s+et\s+seq\.?)?)'
     text = re.sub(statute_pattern, r'<span class="inline-citation">\1 \2</span>', text, flags=re.IGNORECASE)
     
+    # 5. Policy
     policy_pattern = r'(?<!class="inline-citation">)\b(CP\s*&\s*P-[IVX\d\-\w]+)'
     text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
-    # 4. Published Cases (Matches: *Name*, Vol Reporter Page (Year))
-    case_pub_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?\d+\s+N\.J\.(?:\s+Super\.)?\s+\d+(?:\s*\(\w+\s+\d{4}\))?)'
+    # 6. Published Cases (Recursive "Citing" Support)
+    # Matches: *Case Name*, Citation (Year) (citing *Other Case*, Citation)
+    # The regex allows for an optional trailing parenthetical starting with "citing"
+    case_pub_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?\d+\s+N\.J\.(?:\s+Super\.)?\s+\d+(?:\s*\(\w+\s+\d{4}\))?(?:\s*\(citing.*?\))?)'
     text = re.sub(case_pub_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
 
-    # 5. UNPUBLISHED CASES (The "Bennett" Style Fix)
-    # Target: *Name*, No. A-123 (App. Div. Month Day, Year)
-    # Regex: Matches Italic Name + "No." + Docket + Date Parenthetical
-    docket_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?No\.\s+A-[\d\w-]+(?:\s*\([^)]+\))?)'
+    # 7. Unpublished Cases ("Bennett" Style + Bridge Citations)
+    # Matches: *Name*, No. A-123 (Date) (citing *Other*, Cit)
+    docket_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?No\.\s+A-[\d\w-]+(?:\s*\([^)]+\))?(?:\s*\(citing.*?\))?)'
     text = re.sub(docket_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
     return text
@@ -202,9 +207,7 @@ def create_docx(content: str) -> BytesIO:
     doc.add_paragraph(f"Generated by AdLitem Pro | {time.strftime('%B %d, %Y')}")
     doc.add_paragraph("__________________________________________________________________")
 
-    # 1. Clean Headers First (Strip markdown)
     content = clean_markdown_headers(content)
-    # 2. Fix Citations & Splits
     content = enforce_citations(content)
     content = strip_redundant_headers(content)
 
@@ -440,7 +443,7 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     status.update(label=f"Found {len(st.session_state.last_sources)} authorities.", state="complete")
                     progress_bar.progress(70, text="Drafting Research Memo...")
 
-                    # --- SYSTEM PROMPT (UPDATED FOR "BENNETT" STYLE) ---
+                    # --- SYSTEM PROMPT (PERFECTIONIST) ---
                     llm = ChatOpenAI(model=PREFERRED_MODEL, temperature=TEMPERATURE)
                     sys_prompt = """You are a Senior Legal Research Attorney. Write a **comprehensive and heavily cited** Research Memo based ONLY on provided SOURCES.
 
@@ -450,15 +453,14 @@ STRICT FORMATTING:
 3. Use '===SECTION_BREAK===' ONLY once, after 'Brief Answer'.
 
 CITATION RULES (CRITICAL):
-1. **UNPUBLISHED CASES (NJ STYLE)**: You MUST adapt the standard Bluebook format for NJ unpublished opinions.
-   - Format: *Case Name*, No. [Docket] (App. Div. Month Day, Year).
-   - Example: *State v. Bennett*, No. A-1234-23 (App. Div. Oct. 21, 2025).
+1. **NO PARENTHESES FOR STANDALONE CITES**: Citations must NOT be enclosed in parentheses at the end of a sentence.
+   - WRONG: "...was justified (N.J.S.A. 9:6-8.21)."
+   - RIGHT: "...was justified. N.J.S.A. 9:6-8.21."
 2. **CHAIN OF CUSTODY**:
    - **YOU MUST** cite the unpublished case in the text as the authority.
    - **BRIDGE CITATION**: If the unpublished case relies on a published precedent, format it as:
      *State v. Bennett*, No. A-1234-23 (App. Div. Oct. 21, 2025) (citing *State v. Smith*, 123 N.J. 456 (2010)).
-   - FAILURE TO PROVIDE THIS BRIDGE CITATION IS A CRITICAL ERROR.
-
+   - Use "supra" for repeated citations where appropriate (e.g. *Bennett*, supra).
 3. **BLUEBOOK**: Use 'N.J.S.A.' and 'N.J.A.C.' (always with periods)."""
                     
                     chain = ChatPromptTemplate.from_messages([("system", sys_prompt), ("user", "CITATIONS: {citations}\n\nCONTEXT: {context}\n\nISSUE: {input}")]) | llm | StrOutputParser()
