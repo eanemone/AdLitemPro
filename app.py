@@ -36,7 +36,7 @@ BM25_PATH = os.path.join(BASE_DIR, "bm25_retriever.pkl")
 COLLECTION_NAME = "legal_cases_eyecite"
 
 PREFERRED_MODEL = "gpt-4o" 
-TEMPERATURE = 0.4 
+TEMPERATURE = 0.3 # Lowered to reduce "creative" formatting errors
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AdLitemPro")
@@ -91,7 +91,7 @@ st.markdown("""
     .memo-header { color: #0369A1; font-weight: 800; font-size: 1.4rem; margin-top: 1.5rem; margin-bottom: 0.8rem; font-family: 'Helvetica Neue', sans-serif; text-transform: uppercase; letter-spacing: 0.03em; }
     
     /* CITATION STYLING (The "Blue" Scannability) */
-    .inline-citation { color: #0284c7; font-weight: bold; font-size: 0.95em; }
+    .inline-citation { color: #0284c7; font-weight: 700; font-size: 0.95em; }
 
     /* AUTHORITY LIST */
     .auth-item { border-left: 4px solid #38BDF8; background: #1E293B; padding: 15px; margin-bottom: 12px; border-radius: 0 4px 4px 0; }
@@ -154,8 +154,12 @@ def clean_llm_output(text: str) -> str:
     text = re.sub(r'\s*```$', '', text)
     return text.strip()
 
-# --- CLEANER & CITATION ENFORCER (EXPANDED FOR CASE LAW) ---
+# --- CLEANER & CITATION ENFORCER (10X EFFECTIVE) ---
 def enforce_citations(text: str) -> str:
+    # 0. NUCLEAR OPTION: Scrub any remaining [Source X] placeholders
+    text = re.sub(r'\[Source \d+\]', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\(Source \d+\)', '', text, flags=re.IGNORECASE)
+
     # 1. Fix broken newlines in Statutes (N.J.S.A. \n 9:6)
     text = re.sub(r'(N\.J\.A\.C\.|N\.J\.S\.A\.|N\.J\.|N\.J\. Super\.)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
     
@@ -167,18 +171,24 @@ def enforce_citations(text: str) -> str:
     text = re.sub(r'(?i)\bN\.?J\.?A\.?C\.?\s*(\d+[:\-])', r'N.J.A.C. \1', text)
     text = re.sub(r'(?i)\bN\.?J\.?S\.?A\.?\s*(\d+[:\-])', r'N.J.S.A. \1', text)
     
-    # 4. Highlight Statutes/Codes
-    statute_pattern = r'(?<!class="inline-citation">)(N\.J\.A\.C\.|N\.J\.S\.A\.|N\.J\.|N\.J\. Super\.)\s*(\d+[:\-]\d+[\d\-\.\w]*)'
+    # --- BLUE HIGHLIGHTING LOGIC ---
+    
+    # 4. Highlight Statutes/Codes (e.g., N.J.S.A. 9:6-8.21)
+    statute_pattern = r'(?<!class="inline-citation">)\b(N\.J\.A\.C\.|N\.J\.S\.A\.)\s*(\d+[:\-][\d\-\.\w]+)'
     text = re.sub(statute_pattern, r'<span class="inline-citation">\1 \2</span>', text, flags=re.IGNORECASE)
     
-    # 5. Highlight Policy
-    policy_pattern = r'(?<!class="inline-citation">)(CP\s*&\s*P-[IVX\d\-\w]+)'
+    # 5. Highlight Policy (e.g., CP&P-IV-A-1)
+    policy_pattern = r'(?<!class="inline-citation">)\b(CP\s*&\s*P-[IVX\d\-\w]+)'
     text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
-    # 6. NEW: Highlight Case Citations (e.g., 205 N.J. 17)
-    # Looks for: Digits, space, N.J. or N.J. Super., space, digits
-    case_pattern = r'(?<!class="inline-citation">)(\d+\s+N\.J\.(?:\s+Super\.)?\s+\d+)'
-    text = re.sub(case_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
+    # 6. Highlight Published Cases (e.g., 205 N.J. 17 or 400 N.J. Super. 12)
+    # Catches: "123 N.J. 456" or "123 N.J. Super. 456"
+    case_pub_pattern = r'(?<!class="inline-citation">)(\d+\s+N\.J\.(?:\s+Super\.)?\s+\d+)'
+    text = re.sub(case_pub_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
+
+    # 7. Highlight Unpublished/Docket (e.g., No. A-1234-20)
+    docket_pattern = r'(?<!class="inline-citation">)(No\.\s+A-\d+-\d+(?:T\d+)?)'
+    text = re.sub(docket_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
     return text
 
@@ -425,7 +435,7 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                             if not docket:
                                 m = re.search(r'No\.\s*([\w-]+)', cite_str)
                                 docket = m.group(1) if m else cite_str
-                            link = f"https://scholar.google.com/scholar?hl=en&as_sdt=4%2C31&q={urllib.parse.quote(docket)}&oq="
+                            link = f"https://scholar.google.com/scholar?hl=en&as_sdt=4%2C31&q={urllib.parse.quote(docket)}"
                             
                         st.session_state.last_sources.append({"label": get_badge_label(meta), "title": title, "cite": cite_str, "snippet": content[:350], "link": link})
                         
@@ -440,18 +450,19 @@ HERMENEUTIC REASONING RULE:
 Before drafting, interpret the query within the broader context of New Jersey child welfare law. 
 Extract and apply the underlying legal principles from the most analogous sources.
 
-STRICT FORMATTING & CITATION RULES:
-1. **NO MEMO HEADER**: DO NOT include a "To/From/Date" block. Start immediately with the header "QUESTION PRESENTED".
-2. **CITATION STYLE**: 
-   - Use standard inline citations (e.g., *Case Name*, 205 N.J. 17 (2011)).
-   - **DO NOT** use bracketed source numbers like [Source 1].
-   - **DO NOT** split citations across lines.
-3. **DISCUSSION**: Must be robust. Analyze conflicting authorities and synthesize rules.
-4. **UNPUBLISHED CASES**: Cite as "[Case Name], [Docket No.] (unpublished) (App. Div. [Year])". 
-   - CRITICAL: If the text says it relies on a published case, append "(citing [Published Case Name])".
-5. **BLUEBOOK**: Use 'N.J.S.A.' and 'N.J.A.C.' (always with periods).
+RULES FOR CITATION (NON-NEGOTIABLE):
+1. **NO SOURCE NUMBERS**: You are strictly FORBIDDEN from using references like "[Source 1]", "(Source 3)", "[1]", etc.
+2. **FULL BLUEBOOK CITATIONS**: You must extract the full case name and citation from the source text and use it inline.
+   - Example: "The court found X. *DCPP v. A.B.*, 123 N.J. Super. 456 (App. Div. 2023)."
+   - If a specific page number is not available, omit it, but keep the reporter volume and page.
+3. **STATUTES & CODE**: Use "N.J.S.A. 9:6-8.21" or "N.J.A.C. 10:129-1.1".
+4. **UNPUBLISHED**: Use format: "*Case Name*, No. A-XXXX-XX (App. Div. Month Day, Year)".
+5. **PLACEMENT**: Citations must be placed immediately following the proposition they support, inside the sentence or at the end, but BEFORE the period if possible, or as a standalone sentence if necessary.
 
-6. Use '===SECTION_BREAK===' ONLY once, after 'Brief Answer'."""
+STRICT FORMATTING:
+1. **NO MEMO HEADER**: DO NOT include a "To/From/Date" block. Start immediately with the header "QUESTION PRESENTED".
+2. **DISCUSSION**: Must be robust. Analyze conflicting authorities and synthesize rules.
+3. Use '===SECTION_BREAK===' ONLY once, after 'Brief Answer'."""
                     
                     chain = ChatPromptTemplate.from_messages([("system", sys_prompt), ("user", "CITATIONS: {citations}\n\nCONTEXT: {context}\n\nISSUE: {input}")]) | llm | StrOutputParser()
                     response = chain.invoke({"input": search_query, "context": "\n\n".join(context_blocks), "citations": citation_map})
