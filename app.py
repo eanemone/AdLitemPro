@@ -44,7 +44,7 @@ logger = logging.getLogger("AdLitemPro")
 # --- UI SETUP ---
 st.set_page_config(page_title="AdLitem Pro", layout="wide", page_icon="⚖️")
 
-# --- CUSTOM CSS (FIXED FOCUS COLORS) ---
+# --- CUSTOM CSS ---
 st.markdown("""
 <style>
     .stApp { max-width: 1100px; margin: 0 auto; }
@@ -54,38 +54,20 @@ st.markdown("""
     .subtitle { font-size: 0.95rem; color: #94A3B8; text-align: center; margin-bottom: 2rem; font-weight: 400; letter-spacing: 0.05em; }
     
     /* --- AGGRESSIVE INPUT FOCUS STYLING --- */
-    
-    /* 1. Target Text Inputs (Username, etc.) */
     div[data-baseweb="input"]:focus-within {
         border-color: #38BDF8 !important;
         box-shadow: 0 0 0 1px #38BDF8 !important;
     }
-    
-    /* 2. Target Text Areas (Chat Input) */
     div[data-baseweb="textarea"]:focus-within {
         border-color: #38BDF8 !important;
         box-shadow: 0 0 0 1px #38BDF8 !important;
     }
-
-    /* 3. Target the Chat Input Container specifically */
-    [data-testid="stChatInput"] {
-        border-color: transparent !important; /* Let the inner textarea handle the border */
-    }
+    [data-testid="stChatInput"] { border-color: transparent !important; }
     
-    /* 4. Button Styling */
-    .stButton button {
-        border-color: #38BDF8 !important;
-        color: #38BDF8 !important;
-    }
-    .stButton button:hover {
-        border-color: #0EA5E9 !important;
-        color: #0EA5E9 !important;
-    }
-    .stButton button:focus {
-        border-color: #38BDF8 !important;
-        color: #38BDF8 !important;
-        box-shadow: 0 0 0 1px #38BDF8 !important;
-    }
+    /* Button Styling */
+    .stButton button { border-color: #38BDF8 !important; color: #38BDF8 !important; }
+    .stButton button:hover { border-color: #0EA5E9 !important; color: #0EA5E9 !important; }
+    .stButton button:focus { border-color: #38BDF8 !important; color: #38BDF8 !important; box-shadow: 0 0 0 1px #38BDF8 !important; }
 
     /* MEMO STYLES */
     .memo-container { background: #FFFFFF; border-radius: 8px; border: 1px solid #E2E8F0; overflow: hidden; margin-bottom: 1.5rem; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
@@ -104,33 +86,48 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- AUTHENTICATION GATE ---
+# --- AUTHENTICATION GATE (FIXED) ---
 def check_password():
-    def password_entered():
-        if "username" in st.session_state and "password" in st.session_state:
-            user = st.session_state["username"]
-            pwd = st.session_state["password"]
-            if (user in st.secrets["passwords"] and pwd == st.secrets["passwords"][user]):
-                st.session_state["password_correct"] = True
-                del st.session_state["password"]
-                del st.session_state["username"]
-            else:
-                st.session_state["password_correct"] = False
-
-    credit_html = """<div style="text-align: center; margin-bottom: 15px;"><span style="font-family: 'Helvetica Neue', sans-serif; font-size: 0.75rem; color: #64748B; letter-spacing: 0.1em; text-transform: uppercase;">Created by <span style="color: #E2E8F0; font-weight: 600;">Ernest Anemone, Esq.</span></span></div>"""
-
+    # 1. Initialize State if missing
     if "password_correct" not in st.session_state:
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.markdown('<div style="margin-top: 80px;"></div>', unsafe_allow_html=True)
-            st.markdown('<div class="main-header">AdLitem<span style="color:#38BDF8">Pro</span></div>', unsafe_allow_html=True)
-            st.markdown(credit_html, unsafe_allow_html=True)
-            st.markdown('<div class="subtitle">AUTHORIZED PERSONNEL ONLY</div>', unsafe_allow_html=True)
-            st.text_input("Username", key="username")
-            st.text_input("Password", type="password", on_change=password_entered, key="password")
+        st.session_state["password_correct"] = False
+    if "login_attempted" not in st.session_state:
+        st.session_state["login_attempted"] = False
+
+    # 2. Define Callback
+    def password_entered():
+        st.session_state["login_attempted"] = True
+        user = st.session_state.get("username", "")
+        pwd = st.session_state.get("password", "")
+        
+        if (user in st.secrets["passwords"] and pwd == st.secrets["passwords"][user]):
+            st.session_state["password_correct"] = True
+            # Optional: Clear credentials for security
+            del st.session_state["password"] 
+            del st.session_state["username"]
+        else:
+            st.session_state["password_correct"] = False
+
+    # 3. If Logged In, Return True immediately
+    if st.session_state["password_correct"]:
+        return True
+
+    # 4. Render Login Form (If not logged in)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown('<div style="margin-top: 80px;"></div>', unsafe_allow_html=True)
+        st.markdown('<div class="main-header">AdLitem<span style="color:#38BDF8">Pro</span></div>', unsafe_allow_html=True)
+        st.markdown("""<div style="text-align: center; margin-bottom: 15px;"><span style="font-family: 'Helvetica Neue', sans-serif; font-size: 0.75rem; color: #64748B; letter-spacing: 0.1em; text-transform: uppercase;">Created by <span style="color: #E2E8F0; font-weight: 600;">Ernest Anemone, Esq.</span></span></div>""", unsafe_allow_html=True)
+        st.markdown('<div class="subtitle">AUTHORIZED PERSONNEL ONLY</div>', unsafe_allow_html=True)
+        
+        st.text_input("Username", key="username")
+        st.text_input("Password", type="password", on_change=password_entered, key="password")
+        
+        # 5. Show Error ONLY if attempted
+        if st.session_state["login_attempted"] and not st.session_state["password_correct"]:
             st.error("😕 Access Denied")
-        return False
-    return True
+            
+    return False
 
 if not check_password():
     st.stop()
@@ -148,36 +145,15 @@ def clean_llm_output(text: str) -> str:
 
 # --- CLEANER & CITATION ENFORCER ---
 def enforce_citations(text: str) -> str:
-    """
-    1. Removes newlines that break citations.
-    2. Normalizes NJSA/NJAC to Bluebook (N.J.S.A. / N.J.A.C.).
-    3. Wraps them in HTML span tags.
-    """
-    # Fix broken newlines in citations (e.g., "N.J.A.C.\n10:122")
     text = re.sub(r'(N\.J\.A\.C\.|N\.J\.S\.A\.|N\.J\.|N\.J\. Super\.)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
-
-    # Normalize Admin Code: NJAC, N.J.A.C -> N.J.A.C.
-    text = re.sub(
-        r'(?i)\bN\.?J\.?A\.?C\.?\s*(\d+[:\-])', 
-        r'N.J.A.C. \1', 
-        text
-    )
-
-    # Normalize Statutes: NJSA, N.J.S.A -> N.J.S.A.
-    text = re.sub(
-        r'(?i)\bN\.?J\.?S\.?A\.?\s*(\d+[:\-])', 
-        r'N.J.S.A. \1', 
-        text
-    )
-
-    # Wrap normalized citations in span tags
+    text = re.sub(r'(?i)\bN\.?J\.?A\.?C\.?\s*(\d+[:\-])', r'N.J.A.C. \1', text)
+    text = re.sub(r'(?i)\bN\.?J\.?S\.?A\.?\s*(\d+[:\-])', r'N.J.S.A. \1', text)
+    
     statute_pattern = r'(?<!class="inline-citation">)(N\.J\.A\.C\.|N\.J\.S\.A\.|N\.J\.|N\.J\. Super\.)\s*(\d+[:\-]\d+[\d\-\.\w]*)'
     text = re.sub(statute_pattern, r'<span class="inline-citation">\1 \2</span>', text, flags=re.IGNORECASE)
     
-    # Policy numbers
     policy_pattern = r'(?<!class="inline-citation">)(CP\s*&\s*P-[IVX\d\-\w]+)'
     text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
-    
     return text
 
 def strip_redundant_headers(text: str) -> str:
@@ -192,7 +168,6 @@ def strip_redundant_headers(text: str) -> str:
 # --- WORD DOC GENERATOR ---
 def create_docx(content: str) -> BytesIO:
     doc = Document()
-    
     title = doc.add_heading('Legal Research Memo', 0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph(f"Generated by AdLitem Pro | {time.strftime('%B %d, %Y')}")
@@ -238,8 +213,7 @@ def create_docx(content: str) -> BytesIO:
         for i, segment in enumerate(segments):
             if not segment: continue
             run = p.add_run(segment)
-            if i % 2 == 1:
-                run.bold = True
+            if i % 2 == 1: run.bold = True
 
     buffer = BytesIO()
     doc.save(buffer)
@@ -254,13 +228,7 @@ def render_memo_ui(content: str, key_idx: int):
         parts = content.split("===SECTION_BREAK===")
         brief = parts[0].strip()
         disc = "".join(parts[1:]).strip()
-        
-        st.markdown(f'''
-            <div class="memo-container">
-                <div class="brief-answer">{brief}</div>
-                <div class="discussion-box">{disc}</div>
-            </div>
-        ''', unsafe_allow_html=True)
+        st.markdown(f'<div class="memo-container"><div class="brief-answer">{brief}</div><div class="discussion-box">{disc}</div></div>', unsafe_allow_html=True)
     else:
         st.markdown(f'<div class="memo-container"><div class="discussion-box">{content}</div></div>', unsafe_allow_html=True)
 
