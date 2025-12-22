@@ -44,7 +44,7 @@ logger = logging.getLogger("AdLitemPro")
 # --- UI SETUP ---
 st.set_page_config(page_title="AdLitem Pro", layout="wide", page_icon="⚖️")
 
-# --- CUSTOM CSS (NUCLEAR BLUE THEME) ---
+# --- CUSTOM CSS (CORRECTED HIGHLIGHT THEME) ---
 st.markdown("""
 <style>
     .stApp { max-width: 1100px; margin: 0 auto; }
@@ -53,7 +53,7 @@ st.markdown("""
     .main-header { font-family: 'Helvetica Neue', sans-serif; font-size: 2.8rem; color: #FFFFFF; font-weight: 800; text-align: center; margin-bottom: 0.2rem; }
     .subtitle { font-size: 0.95rem; color: #94A3B8; text-align: center; margin-bottom: 2rem; font-weight: 400; letter-spacing: 0.05em; }
     
-    /* --- AGGRESSIVE INPUT STYLING (THE RED KILLER) --- */
+    /* --- INPUT STYLING (BORDER ONLY) --- */
     /* Target the Chat Input specifically */
     div[data-testid="stChatInput"] textarea:focus {
         border-color: #38BDF8 !important;
@@ -68,7 +68,6 @@ st.markdown("""
     textarea:focus, input:focus {
         border-color: #38BDF8 !important;
         box-shadow: 0 0 0 1px #38BDF8 !important;
-        color: #0F172A !important;
     }
     /* Button Styling */
     .stButton button {
