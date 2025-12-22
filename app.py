@@ -36,7 +36,7 @@ BM25_PATH = os.path.join(BASE_DIR, "bm25_retriever.pkl")
 COLLECTION_NAME = "legal_cases_eyecite"
 
 PREFERRED_MODEL = "gpt-4o" 
-TEMPERATURE = 0.2 
+TEMPERATURE = 0.2  # CRITICAL: Lowered for strict formatting adherence
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AdLitemPro")
@@ -135,58 +135,58 @@ def clean_markdown_headers(text: str) -> str:
     """Strips markdown styling from standard headers to ensure consistent formatting."""
     headers = ["QUESTION PRESENTED", "BRIEF ANSWER", "DISCUSSION", "ANALYSIS", "CONCLUSION"]
     for header in headers:
-        # Regex to find the header with any markdown fluff (*, #, _)
         pattern = re.compile(r'[\#\*\_]+' + re.escape(header) + r'[\#\*\_]*', re.IGNORECASE)
         text = re.sub(pattern, header, text)
     return text
 
-# --- CITATION PERFECTION ENGINE (V7 - NON-BREAKING SPACES) ---
+# --- CITATION PERFECTION ENGINE (V7 - FIXED ESCAPING) ---
 def enforce_citations(text: str) -> str:
     # 0. Scrub placeholders
     text = re.sub(r'\[Source \d+\]', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\(Source \d+\)', '', text, flags=re.IGNORECASE)
 
     # 1. REMOVE PARENTHESES FROM STANDALONE CITES
-    text = re.sub(r'([a-z])\s*\(([^)]*?(?:N\.J\.|N\.J\.S\.A\.|N\.J\.A\.C\.|No\. A-).*?)\)[\.\s]*$', r'\1. \2', text, flags=re.MULTILINE|re.IGNORECASE)
-    text = re.sub(r'([a-z])\s*\(([^)]*?(?:N\.J\.|N\.J\.S\.A\.|N\.J\.A\.C\.|No\. A-).*?)\)\s*$', r'\1. \2', text, flags=re.MULTILINE|re.IGNORECASE)
+    text = re.sub(r'([a-z])\s*\(([^)]*?(?:N\.J\.|N\.J\.S\.A\.|N\.J\.A\.C\.|No\. A-).*?)\)[\.\s]*$', "\\1. \\2", text, flags=re.MULTILINE|re.IGNORECASE)
+    text = re.sub(r'([a-z])\s*\(([^)]*?(?:N\.J\.|N\.J\.S\.A\.|N\.J\.A\.C\.|No\. A-).*?)\)\s*$', "\\1. \\2", text, flags=re.MULTILINE|re.IGNORECASE)
 
     # 2. FIX SPLIT LINES & APPLY NON-BREAKING SPACES (\u00A0)
-    # This loop replaces standard spaces with Non-Breaking Spaces in critical patterns
+    # NOTE: We use standard strings "" with double backslashes for groups (\\1) 
+    # to allow Python to process the \u00A0 unicode character correctly.
     
-    # 2a. Fix Statutes: "N.J.S.A. 9:6-8.21" -> "N.J.S.A.\u00A09:6-8.21"
-    text = re.sub(r'(N\.J\.S\.A\.|N\.J\.A\.C\.)\s*([\d\w:-]+)\s*-\s*\n\s*([\d\.]+)', r'\1\u00A0\2-\3', text, flags=re.IGNORECASE) # Fix mid-number split
-    text = re.sub(r'(\bN\.?J\.?[SA]\.?[AC]\.?)\s+([\d\w:\-\.]+)', r'\1\u00A0\2', text, flags=re.IGNORECASE)
+    # 2a. Fix Statutes: "N.J.S.A. 9:6-8.21" -> "N.J.S.A.[NBSP]9:6-8.21"
+    text = re.sub(r'(N\.J\.S\.A\.|N\.J\.A\.C\.)\s*([\d\w:-]+)\s*-\s*\n\s*([\d\.]+)', "\\1\u00A0\\2-\\3", text, flags=re.IGNORECASE)
+    text = re.sub(r'(\bN\.?J\.?[SA]\.?[AC]\.?)\s+([\d\w:\-\.]+)', "\\1\u00A0\\2", text, flags=re.IGNORECASE)
 
-    # 2b. Fix Reporters: "205 N.J. 17" -> "205\u00A0N.J.\u00A017"
-    text = re.sub(r'(\d+)\s+(N\.J\.|Super\.)\s+(\d+)', r'\1\u00A0\2\u00A0\3', text, flags=re.IGNORECASE)
-    text = re.sub(r'(\d+)\s+(N\.J\.)\s+(Super\.)\s+(\d+)', r'\1\u00A0\2\u00A0\3\u00A0\4', text, flags=re.IGNORECASE)
+    # 2b. Fix Reporters: "205 N.J. 17" -> "205[NBSP]N.J.[NBSP]17"
+    text = re.sub(r'(\d+)\s+(N\.J\.|Super\.)\s+(\d+)', "\\1\u00A0\\2\u00A0\\3", text, flags=re.IGNORECASE)
+    text = re.sub(r'(\d+)\s+(N\.J\.)\s+(Super\.)\s+(\d+)', "\\1\u00A0\\2\u00A0\\3\u00A0\\4", text, flags=re.IGNORECASE)
 
-    # 2c. Fix "v." and "in re" with Non-Breaking Spaces
-    text = re.sub(r'(\bv\.)\s+', r'\1\u00A0', text, flags=re.IGNORECASE)
-    text = re.sub(r'(in\s+re)\s+', r'in\u00A0re\u00A0', text, flags=re.IGNORECASE)
+    # 2c. Fix "v." and "in re" with Non-Breaking Spaces to prevent wrapping
+    text = re.sub(r'(\bv\.)\s+', "\\1\u00A0", text, flags=re.IGNORECASE)
+    text = re.sub(r'(in\s+re)\s+', "in\u00A0re\u00A0", text, flags=re.IGNORECASE)
 
     # 3. NORMALIZE FORMATS
     text = re.sub(r'(?i)N\.?J\.?\s*Admin\.?\s*Code\s*§?\s*', 'N.J.A.C. ', text)
-    text = re.sub(r'(?i)\bN\.?J\.?A\.?C\.?\s*(\d+[:\-])', r'N.J.A.C. \1', text)
-    text = re.sub(r'(?i)\bN\.?J\.?S\.?A\.?\s*(\d+[:\-])', r'N.J.S.A. \1', text)
+    text = re.sub(r'(?i)\bN\.?J\.?A\.?C\.?\s*(\d+[:\-])', 'N.J.A.C. \\1', text)
+    text = re.sub(r'(?i)\bN\.?J\.?S\.?A\.?\s*(\d+[:\-])', 'N.J.S.A. \\1', text)
     
     # --- BLUE HIGHLIGHTING ---
     
     # 4. Statutes/Codes (Expanded Range Support)
     statute_pattern = r'(?<!class="inline-citation">)\b(N\.J\.A\.C\.|N\.J\.S\.A\.)\s*(\d+[:\-][\d\-\.\w]+(?:\s+(?:to\s+)?-?[\d\-\.\w]+|\s+et\s+seq\.?)?)'
-    text = re.sub(statute_pattern, r'<span class="inline-citation">\1 \2</span>', text, flags=re.IGNORECASE)
+    text = re.sub(statute_pattern, '<span class="inline-citation">\\1 \\2</span>', text, flags=re.IGNORECASE)
     
     # 5. Policy
     policy_pattern = r'(?<!class="inline-citation">)\b(CP\s*&\s*P-[IVX\d\-\w]+)'
-    text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
+    text = re.sub(policy_pattern, '<span class="inline-citation">\\1</span>', text, flags=re.IGNORECASE)
     
     # 6. Published Cases (Recursive "Citing")
     case_pub_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?\d+[\u00A0\s]+N\.J\.(?:[\u00A0\s]+Super\.)?[\u00A0\s]+\d+(?:\s*\(\w+\s+\d{4}\))?(?:\s*\(citing.*?\))?)'
-    text = re.sub(case_pub_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
+    text = re.sub(case_pub_pattern, '<span class="inline-citation">\\1</span>', text, flags=re.IGNORECASE)
 
     # 7. Unpublished Cases (Bennett Style)
     docket_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?No\.\s+A-[\d\w-]+(?:\s*\([^)]+\))?(?:\s*\(citing.*?\))?)'
-    text = re.sub(docket_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
+    text = re.sub(docket_pattern, '<span class="inline-citation">\\1</span>', text, flags=re.IGNORECASE)
     
     return text
 
@@ -443,7 +443,7 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     status.update(label=f"Found {len(st.session_state.last_sources)} authorities.", state="complete")
                     progress_bar.progress(70, text="Drafting Research Memo...")
 
-                    # --- SYSTEM PROMPT (PERFECTIONIST V6) ---
+                    # --- SYSTEM PROMPT (PERFECTIONIST V7) ---
                     llm = ChatOpenAI(model=PREFERRED_MODEL, temperature=TEMPERATURE)
                     sys_prompt = """You are a Senior Legal Research Attorney. Write a **comprehensive and heavily cited** Research Memo based ONLY on provided SOURCES.
 
