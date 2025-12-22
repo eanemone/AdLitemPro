@@ -17,7 +17,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 
-# --- STANDARD LANGCHAIN IMPORTS (FIXED) ---
+# --- STANDARD LANGCHAIN IMPORTS ---
 from langchain.retrievers import ParentDocumentRetriever, EnsembleRetriever
 from langchain.storage import LocalFileStore
 from langchain.storage._lc_store import create_kv_docstore
@@ -36,7 +36,7 @@ BM25_PATH = os.path.join(BASE_DIR, "bm25_retriever.pkl")
 COLLECTION_NAME = "legal_cases_eyecite"
 
 PREFERRED_MODEL = "gpt-4o" 
-TEMPERATURE = 0.4
+TEMPERATURE = 0.6
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AdLitemPro")
@@ -150,6 +150,27 @@ def clean_llm_output(text: str) -> str:
     text = re.sub(r'\s*```$', '', text)
     return text.strip()
 
+# --- NEW: CITATION HIGHLIGHTER ---
+def enforce_citations(text: str) -> str:
+    """
+    Regex safety net: Finds N.J.A.C., N.J.S.A., and CP&P citations 
+    that the AI missed and wraps them in styling tags.
+    Also fixes 'orphan' numbers if they got split from the statute name.
+    """
+    # 1. Capture N.J.A.C./N.J.S.A. X:Y-Z
+    # Pattern: (Start)(Spacing)(Numbers)(Dash/Dot)(MoreNumbers)
+    # Excludes ones already wrapped in "inline-citation"
+    
+    # Regex for N.J.A.C. / N.J.S.A.
+    statute_pattern = r'(?<!class="inline-citation">)(N\.J\.A\.C\.|N\.J\.S\.A\.|N\.J\.|N\.J\. Super\.)\s*(\d+[:\-]\d+[\d\-\.\w]*)'
+    text = re.sub(statute_pattern, r'<span class="inline-citation">\1 \2</span>', text, flags=re.IGNORECASE)
+    
+    # Regex for CP&P Policies (e.g., CP&P-IV-A-1-100)
+    policy_pattern = r'(?<!class="inline-citation">)(CP\s*&\s*P-[IVX\d\-\w]+)'
+    text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
+
+    return text
+
 # --- WORD DOC GENERATOR ---
 def create_docx(content: str) -> BytesIO:
     doc = Document()
@@ -162,19 +183,21 @@ def create_docx(content: str) -> BytesIO:
     doc.add_paragraph("__________________________________________________________________")
 
     # Split content by lines to process headers and tags
-    # First, handle the SECTION BREAK split
     parts = content.split("===SECTION_BREAK===")
     
-    # Combine parts back with a clear delimiter for processing line-by-line
-    # We will treat the Brief Answer special if it exists
     full_text_lines = []
     
     if len(parts) > 1:
         full_text_lines.append("BRIEF ANSWER")
-        full_text_lines.extend(parts[0].split('\n'))
-        full_text_lines.append("") # Spacer
+        # Remove redundant 'Brief Answer' header if AI generated it
+        brief_text = parts[0].replace("Brief Answer\n", "").strip()
+        full_text_lines.extend(brief_text.split('\n'))
+        
+        full_text_lines.append("") 
         full_text_lines.append("DISCUSSION")
-        full_text_lines.extend(parts[1].split('\n'))
+        # Remove redundant 'Discussion' header if AI generated it
+        disc_text = parts[1].replace("Discussion\n", "").strip()
+        full_text_lines.extend(disc_text.split('\n'))
     else:
         full_text_lines = content.split('\n')
 
@@ -193,32 +216,31 @@ def create_docx(content: str) -> BytesIO:
             doc.add_heading(header_match.group(1), level=1)
             continue
             
-        # Check for explicit section labels we added above
         if line in ["BRIEF ANSWER", "DISCUSSION"]:
             doc.add_heading(line, level=1)
             continue
 
         # Process Body Text (Remove citation tags but keep text)
         clean_line = citation_re.sub(r'\1', line) # Replace <span...>cite</span> with cite
-        
-        # Remove any other leftover HTML tags
         clean_line = clean_plain_text(clean_line)
         
         p = doc.add_paragraph(clean_line)
         p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
-    # Save to buffer
     buffer = BytesIO()
     doc.save(buffer)
     buffer.seek(0)
     return buffer
 
 def render_memo_ui(content: str, key_idx: int):
-    # Render HTML Display
+    # Apply Safety Net Highlighting
+    content = enforce_citations(content)
+    
     if "===SECTION_BREAK===" in content:
         parts = content.split("===SECTION_BREAK===")
-        brief_section = parts[0]
-        discussion_section = "".join(parts[1:])
+        brief_section = parts[0].replace("Brief Answer", "").strip() # Clean redundancy
+        discussion_section = "".join(parts[1:]).replace("Discussion", "").strip() # Clean redundancy
+        
         st.markdown(f'''
             <div class="memo-container">
                 <div class="brief-answer">{brief_section}</div>
@@ -247,26 +269,10 @@ def get_badge_label(metadata):
 
 # --- NEW: HISTORY CONTEXTUALIZATION ---
 def rewrite_query(original_input, chat_history):
-    """Rewrites the user query to include context from history."""
-    if not chat_history:
-        return original_input
-        
+    if not chat_history: return original_input
     llm = ChatOpenAI(model=PREFERRED_MODEL, temperature=0.3)
-    
-    prompt = f"""
-    Given the following conversation history and a follow-up question, 
-    rephrase the follow-up question to be a standalone query that includes all necessary context.
-    
-    Chat History:
-    {chat_history}
-    
-    Follow-Up Input: {original_input}
-    
-    Standalone Question:
-    """
-    
-    response = llm.invoke(prompt)
-    return response.content
+    prompt = f"Chat History:\n{chat_history}\n\nFollow-Up Input: {original_input}\n\nStandalone Question:"
+    return llm.invoke(prompt).content
 
 # --- DATABASE LOADING ---
 @st.cache_resource
@@ -309,59 +315,28 @@ if "last_sources" not in st.session_state: st.session_state.last_sources = []
 # --- LANDING PAGE ---
 if not st.session_state.messages:
     st.markdown('<div style="height: 4vh;"></div>', unsafe_allow_html=True)
-    
-    # Author Credit
-    st.markdown("""
-    <div style="text-align: center; margin-bottom: 40px;">
-        <span style="font-family: 'Helvetica Neue', sans-serif; font-size: 0.85rem; color: #64748B; letter-spacing: 0.1em; text-transform: uppercase;">
-            Created by <span style="color: #E2E8F0; font-weight: 600;">Ernest Anemone, Esq.</span>
-        </span>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown("""
-    <div style="text-align: center; color: #94A3B8; margin-bottom: 30px; font-size: 0.9rem;">
-        Select a sample fact pattern to test the research engine:
-    </div>
-    """, unsafe_allow_html=True)
-
+    st.markdown("""<div style="text-align: center; margin-bottom: 40px;"><span style="font-family: 'Helvetica Neue', sans-serif; font-size: 0.85rem; color: #64748B; letter-spacing: 0.1em; text-transform: uppercase;">Created by <span style="color: #E2E8F0; font-weight: 600;">Ernest Anemone, Esq.</span></span></div>""", unsafe_allow_html=True)
+    st.markdown("""<div style="text-align: center; color: #94A3B8; margin-bottom: 30px; font-size: 0.9rem;">Select a sample fact pattern to test the research engine:</div>""", unsafe_allow_html=True)
     col1, col2, col3 = st.columns(3)
-    
-    def set_prompt(text):
-        st.session_state.messages.append({"role": "user", "content": text})
+    def set_prompt(text): st.session_state.messages.append({"role": "user", "content": text})
     
     with col1:
-        # Scenario: Cannabis / CREAMMA Act
-        if st.button("🌿 Cannabis & 'Imminent Harm'", use_container_width=True, help="Analyze impact of CREAMMA on Title 9"):
+        if st.button("🌿 Cannabis & 'Imminent Harm'", use_container_width=True):
             set_prompt("Analyze the impact of the NJ CREAMMA Act on Title 9 litigation. Specifically: Does a positive newborn toxicology screen for THC, absent evidence of actual parenting impairment, legally sustain a finding of abuse or neglect? Cite recent Appellate Division precedents.")
             st.rerun()
-        st.caption("Newborn toxicology vs. actual impairment under CREAMMA.")
-            
     with col2:
-        # Scenario: The "Safety Plan" Trap (Due Process)
-        if st.button("🚧 'Safety Plans' & Due Process", use_container_width=True, help="Analyze legality of extra-judicial removals"):
+        if st.button("🚧 'Safety Plans' & Due Process", use_container_width=True):
             set_prompt("Analyze the legality of DCPP 'Safety Protection Plans' that require a parent to leave the home under threat of removal. Does this constitute a 'constructive removal' requiring a Dodd hearing?")
             st.rerun()
-        st.caption("Constructive removal vs. voluntary agreement.")
-            
     with col3:
-        # Scenario: KLG Defense (The "P.P." Standard)
-        if st.button("👨‍👩‍👧 KLG vs. Adoption Preference", use_container_width=True, help="Kinship Legal Guardianship standards"):
+        if st.button("👨‍👩‍👧 KLG vs. Adoption Preference", use_container_width=True):
             set_prompt("If a resource parent unequivocally prefers adoption, can the court still grant Kinship Legal Guardianship (KLG) to avoid Termination of Parental Rights (TPR)? Analyze the 'clear and convincing' evidence standard under the KLG Act amendments.")
             st.rerun()
-        st.caption("Resource parent preference vs. statutory KLG defense.")
-    
-    st.markdown("""
-    <div style="text-align: center; color: #475569; font-size: 0.75rem; margin-top: 50px;">
-        AdLitem Pro is an AI-assisted research tool. Results must be verified by a licensed attorney.
-    </div>
-    """, unsafe_allow_html=True)
 
 # Render History
 for idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
         if msg["role"] == "assistant":
-            # Pass index to generate unique keys for buttons
             render_memo_ui(msg["content"], idx)
         else:
             st.markdown(msg["content"])
@@ -374,46 +349,31 @@ if prompt := st.chat_input("Start legal research task..."):
 # Execution
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     current_prompt = st.session_state.messages[-1]["content"]
-    
     with st.chat_message("assistant"):
         retriever = get_retriever()
-        
         if not retriever:
             st.error("Database not found. Please check repository file structure.")
         else:
             progress_bar = st.progress(0, text="Analyzing request history...")
-            
             with st.status("Conducting Deep Research...", expanded=False) as status:
-                
-                # --- STEP 1: CONTEXTUALIZE ---
                 chat_history_str = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[:-1]])
                 search_query = rewrite_query(current_prompt, chat_history_str)
                 
-                if search_query != current_prompt:
-                    logger.info(f"Rewrote query: {current_prompt} -> {search_query}")
-                    status.update(label=f"Refined Query: {search_query[:50]}...")
-
                 try:
-                    # --- STEP 2: RETRIEVE (WITH AUTHORITY MIX + CIC MANUAL + TITLE 9) ---
                     progress_bar.progress(20, text="Querying database...")
-                    
-                    # Primary search
                     docs = retriever.invoke(search_query)
-                    
-                    # Supplemental search (UPDATED to include TITLE 9)
                     supp_query = f"{search_query} DCF Policy CP&P N.J.A.C. N.J.S.A. Title 9 Title 30 CIC Manual"
                     supplemental = retriever.invoke(supp_query)[:15]
                     
-                    # Deduplication
                     unique_docs = []
-                    seen_content = set()
+                    seen = set()
                     for d in (docs + supplemental):
-                        content_hash = hash(d.page_content[:150])
-                        if content_hash not in seen_content:
-                            seen_content.add(content_hash)
+                        h = hash(d.page_content[:150])
+                        if h not in seen:
+                            seen.add(h)
                             unique_docs.append(d)
                     
-                    unique_docs = unique_docs[:30] # Increased context window
+                    unique_docs = unique_docs[:30]
                     context_blocks = []
                     st.session_state.last_sources = []
                     citation_map = {}
@@ -421,131 +381,68 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     progress_bar.progress(50, text="Sanitizing authorities...")
                     for i, doc in enumerate(unique_docs):
                         meta = doc.metadata
-                        
-                        # --- CITATION HYGIENE ---
                         cite_str = clean_plain_text(meta.get("bluebook", meta.get("source", "")))
-                        
-                        # Fix PDF filenames & Special Handling for CIC Manuals
                         if ".pdf" in cite_str.lower() or ".txt" in cite_str.lower():
                             if "cic" in cite_str.lower():
-                                # Extract section number from filename like "CIC_Manual_1601_1" -> "1601.1"
-                                sec_match = re.search(r'(\d+)[_.](\d+)', cite_str)
-                                if sec_match:
-                                    cite_str = f"CIC Manual § {sec_match.group(1)}.{sec_match.group(2)}"
-                                else:
-                                    # Fallback simple number
-                                    sec_match_simple = re.search(r'(\d+)', cite_str)
-                                    if sec_match_simple:
-                                        cite_str = f"CIC Manual § {sec_match_simple.group(1)}"
-                                    else:
-                                        cite_str = "NJ DCF Concurrent Planning (CIC) Manual"
+                                sec = re.search(r'(\d+)[_.](\d+)', cite_str)
+                                cite_str = f"CIC Manual § {sec.group(1)}.{sec.group(2)}" if sec else "NJ DCF CIC Manual"
                             else:
-                                cite_str = "NJ DCF Internal Policy / Administrative Record"
+                                cite_str = "NJ DCF Internal Policy"
                         
-                        if not cite_str:
-                            cite_str = "Unknown Legal Authority"
-
                         content = clean_plain_text(doc.page_content)
                         title = clean_plain_text(meta.get("display_name", "Authority"))
+                        context_blocks.append(f"SOURCE {i+1} [{meta.get('type','case').upper()} - {cite_str}]:\n{content}\n")
+                        citation_map[i+1] = cite_str
                         
-                        source_id = i + 1
-                        doc_type = meta.get("type", "case").upper()
-                        context_blocks.append(f"SOURCE {source_id} [{doc_type} - {cite_str}]:\n{content}\n")
-                        citation_map[source_id] = cite_str
-                        
-                        # Generate Link
                         link = None
                         if meta.get("type", "case") == "case":
-                            search_query_url = meta.get("docket", "")
-                            if not search_query_url:
-                                match = re.search(r'No\.\s*([\w-]+)', cite_str)
-                                search_query_url = match.group(1) if match else cite_str
+                            docket = meta.get("docket", "")
+                            if not docket:
+                                m = re.search(r'No\.\s*([\w-]+)', cite_str)
+                                docket = m.group(1) if m else cite_str
+                            link = f"https://scholar.google.com/scholar?q={urllib.parse.quote(docket)}"
                             
-                            badge_label = get_badge_label(meta)
-                            if badge_label == "UNPUBLISHED":
-                                link = f"https://scholar.google.com/scholar?as_sdt=4,31&q={urllib.parse.quote(search_query_url)}"
-                            else:
-                                link = f"https://scholar.google.com/scholar?q={urllib.parse.quote(search_query_url)}"
-
-                        st.session_state.last_sources.append({
-                            "label": get_badge_label(meta),
-                            "title": title,
-                            "cite": cite_str,
-                            "snippet": content[:350],
-                            "link": link
-                        })
+                        st.session_state.last_sources.append({"label": get_badge_label(meta), "title": title, "cite": cite_str, "snippet": content[:350], "link": link})
                         
-                    status.update(label=f"Found {len(st.session_state.last_sources)} authorities (Cases, Statutes, Policies).", state="complete")
+                    status.update(label=f"Found {len(st.session_state.last_sources)} authorities.", state="complete")
                     progress_bar.progress(70, text="Drafting Research Memo...")
 
-                    # --- STEP 3: GENERATE (WITH STRICT PERIOD PLACEMENT) ---
                     llm = ChatOpenAI(model=PREFERRED_MODEL, temperature=TEMPERATURE)
                     sys_prompt = """You are a Senior Legal Research Attorney. Write a formal Research Memo based ONLY on provided SOURCES.
                     
-                    CRITICAL GRAMMAR ENFORCEMENT (PERIOD PLACEMENT):
-                    - You MUST place a period '.' immediately AFTER the legal claim, BEFORE opening the citation span.
-                    - INCORRECT: "The court disagreed <span class="inline-citation">State v. Jones</span>."
-                    - INCORRECT: "The court disagreed <span class="inline-citation">State v. Jones</span>."
-                    - CORRECT: "The court disagreed. <span class="inline-citation">State v. Jones</span>."
+                    STYLING RULES (CRITICAL):
+                    1. Wrap ALL legal citations (Cases, N.J.S.A., N.J.A.C., CP&P Policies) in <span class="inline-citation">Cite</span>.
+                    2. DO NOT split citations across lines. Keep 'N.J.A.C.' and the number together.
+                    3. Period Placement: Sentence ends. <span class="inline-citation">Cite</span>.
                     
-                    CRITICAL INSTRUCTION 1: CITATION HYGIENE
-                    - NEVER cite a file path. Use the citation provided in the map (e.g., 'CIC Manual § 1601.1').
-                    - If a specific authority is not named, cite as 'NJ DCF Policy Manual' or 'Administrative Record'.
+                    FORMAT:
+                    - Start with 'Question Presented'.
+                    - Use '===SECTION_BREAK===' after 'Brief Answer'.
+                    - No redundant headers.
+                    """
                     
-                    CRITICAL INSTRUCTION 2: PRECEDENTIAL VALUE
-                    - When citing an UNPUBLISHED opinion, you must check if it relies on a PUBLISHED case for the relevant point of law.
-                    - If so, append the published citation in a parenthetical. 
-                    - Example Format: *Div. v. A.B.*, No. A-1234-20 (Unpublished) (citing *Div. v. G.M.*, 198 N.J. 382).
-                    
-                    CRITICAL INSTRUCTION 3: DIVERSE AUTHORITIES
-                    - Integrate statutes (Title 9/30), Case Law, DCF Policies, and the CIC (Concurrent Planning) Manual if available.
-                    
-                    STRICT FORMATTING RULES:
-                    1. No memo headers. Start at 'Question Presented'.
-                    2. Wrap main section headers in <div class="memo-header">HEADER TEXT</div>.
-                    3. For claims, use inline citations: <span class="inline-citation">Bluebook Cite</span>.
-                    4. Use '===SECTION_BREAK===' ONLY once, after 'Brief Answer'."""
-                    
-                    chain_prompt = ChatPromptTemplate.from_messages([
-                        ("system", sys_prompt),
-                        ("user", "CITATIONS: {citations}\n\nCONTEXT: {context}\n\nISSUE: {input}")
-                    ])
-                    
-                    response = (chain_prompt | llm | StrOutputParser()).invoke({
-                        "input": search_query, "context": "\n\n".join(context_blocks), "citations": citation_map
-                    })
+                    chain = ChatPromptTemplate.from_messages([("system", sys_prompt), ("user", "CITATIONS: {citations}\n\nCONTEXT: {context}\n\nISSUE: {input}")]) | llm | StrOutputParser()
+                    response = chain.invoke({"input": search_query, "context": "\n\n".join(context_blocks), "citations": citation_map})
                     
                     clean_resp = clean_llm_output(response)
                     progress_bar.progress(100, text="Memo Complete.")
                     time.sleep(0.5)
                     progress_bar.empty()
-                    
                     st.session_state.messages.append({"role": "assistant", "content": clean_resp})
                     st.rerun()
                     
                 except Exception as e:
-                    st.error(f"An error occurred during research: {e}")
-                    logger.error(f"Execution Error: {e}")
+                    st.error(f"Error: {e}")
                     progress_bar.empty()
 
-# --- FOOTER ---
+# Footer
 if st.session_state.last_sources:
     st.markdown("---")
     with st.expander("📚 View Authority Library", expanded=False):
         for src in st.session_state.last_sources:
-            link_html = f'<a href="{src["link"]}" target="_blank" class="scholar-link-inline">View on Google Scholar ↗</a>' if src["link"] else ""
-            st.markdown(f"""
-            <div class="auth-item">
-                <div class="auth-label">{src['label']}{link_html}</div>
-                <div class="auth-title">{src['title']}</div>
-                <div class="auth-cite">{src['cite']}</div>
-                <div class="auth-snippet">"{src['snippet']}..."</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🗑️ Clear Research Session", use_container_width=True):
-            st.session_state.messages = []
-            st.session_state.last_sources = []
-            st.rerun()
+            link = f'<a href="{src["link"]}" target="_blank" class="scholar-link-inline">View on Scholar ↗</a>' if src["link"] else ""
+            st.markdown(f'<div class="auth-item"><div class="auth-label">{src["label"]}{link}</div><div class="auth-title">{src["title"]}</div><div class="auth-cite">{src["cite"]}</div><div class="auth-snippet">"{src["snippet"]}..."</div></div>', unsafe_allow_html=True)
+    if st.button("🗑️ Clear Research Session", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.last_sources = []
+        st.rerun()
