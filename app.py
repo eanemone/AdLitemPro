@@ -36,7 +36,7 @@ BM25_PATH = os.path.join(BASE_DIR, "bm25_retriever.pkl")
 COLLECTION_NAME = "legal_cases_eyecite"
 
 PREFERRED_MODEL = "gpt-4o" 
-TEMPERATURE = 0.3 # Lowered to reduce "creative" formatting errors
+TEMPERATURE = 0.3 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AdLitemPro")
@@ -90,7 +90,7 @@ st.markdown("""
     .discussion-box { background-color: #FFFFFF; color: #1E293B; padding: 32px; font-family: 'Georgia', serif; font-size: 1.1rem; line-height: 1.8; }
     .memo-header { color: #0369A1; font-weight: 800; font-size: 1.4rem; margin-top: 1.5rem; margin-bottom: 0.8rem; font-family: 'Helvetica Neue', sans-serif; text-transform: uppercase; letter-spacing: 0.03em; }
     
-    /* CITATION STYLING (The "Blue" Scannability) */
+    /* CITATION STYLING */
     .inline-citation { color: #0284c7; font-weight: 700; font-size: 0.95em; }
 
     /* AUTHORITY LIST */
@@ -154,40 +154,40 @@ def clean_llm_output(text: str) -> str:
     text = re.sub(r'\s*```$', '', text)
     return text.strip()
 
-# --- CLEANER & CITATION ENFORCER (10X EFFECTIVE) ---
+# --- CITATION STABILIZATION ENGINE (V3) ---
 def enforce_citations(text: str) -> str:
-    # 0. NUCLEAR OPTION: Scrub any remaining [Source X] placeholders
+    # 0. NUCLEAR OPTION: Scrub any remaining [Source X]
     text = re.sub(r'\[Source \d+\]', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\(Source \d+\)', '', text, flags=re.IGNORECASE)
 
-    # 1. Fix broken newlines in Statutes (N.J.S.A. \n 9:6)
-    text = re.sub(r'(N\.J\.A\.C\.|N\.J\.S\.A\.|N\.J\.|N\.J\. Super\.)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
-    
-    # 2. Fix broken newlines in Case Names (N.J. Div. \n of Youth)
-    text = re.sub(r'(v\.|In re)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
+    # 1. FIX SPLIT LINES
+    text = re.sub(r'(\bN\.?J\.?[SA]\.?[AC]\.?)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
+    text = re.sub(r'(\bv\.|In re)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
+    text = re.sub(r'(N\.J\.)\s*\n\s*(Super\.)', r'\1 \2', text, flags=re.IGNORECASE)
+    text = re.sub(r'(\d+)\s*\n\s*(N\.J\.|Super\.)', r'\1 \2', text, flags=re.IGNORECASE)
+    text = re.sub(r'(N\.J\.|Super\.)\s*\n\s*(\d+)', r'\1 \2', text, flags=re.IGNORECASE)
 
-    # 3. Normalize "N.J. Admin. Code" -> "N.J.A.C."
+    # 2. NORMALIZE FORMATS
     text = re.sub(r'(?i)N\.?J\.?\s*Admin\.?\s*Code\s*§?\s*', 'N.J.A.C. ', text)
     text = re.sub(r'(?i)\bN\.?J\.?A\.?C\.?\s*(\d+[:\-])', r'N.J.A.C. \1', text)
     text = re.sub(r'(?i)\bN\.?J\.?S\.?A\.?\s*(\d+[:\-])', r'N.J.S.A. \1', text)
     
     # --- BLUE HIGHLIGHTING LOGIC ---
     
-    # 4. Highlight Statutes/Codes (e.g., N.J.S.A. 9:6-8.21)
+    # 3. Highlight Statutes/Codes
     statute_pattern = r'(?<!class="inline-citation">)\b(N\.J\.A\.C\.|N\.J\.S\.A\.)\s*(\d+[:\-][\d\-\.\w]+)'
     text = re.sub(statute_pattern, r'<span class="inline-citation">\1 \2</span>', text, flags=re.IGNORECASE)
     
-    # 5. Highlight Policy (e.g., CP&P-IV-A-1)
+    # 4. Highlight Policy
     policy_pattern = r'(?<!class="inline-citation">)\b(CP\s*&\s*P-[IVX\d\-\w]+)'
     text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
-    # 6. Highlight Published Cases (e.g., 205 N.J. 17 or 400 N.J. Super. 12)
-    # Catches: "123 N.J. 456" or "123 N.J. Super. 456"
-    case_pub_pattern = r'(?<!class="inline-citation">)(\d+\s+N\.J\.(?:\s+Super\.)?\s+\d+)'
+    # 5. Highlight Published Cases WITH Name (e.g. *DCPP v. AB*, 205 N.J. 17)
+    case_pub_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?\d+\s+N\.J\.(?:\s+Super\.)?\s+\d+)'
     text = re.sub(case_pub_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
 
-    # 7. Highlight Unpublished/Docket (e.g., No. A-1234-20)
-    docket_pattern = r'(?<!class="inline-citation">)(No\.\s+A-\d+-\d+(?:T\d+)?)'
+    # 6. Highlight Unpublished/Docket WITH Name (e.g. *Case Name*, No. A-1234-20)
+    docket_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?No\.\s+A-\d+-\d+(?:T\d+)?)'
     text = re.sub(docket_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
     return text
@@ -230,15 +230,22 @@ def create_docx(content: str) -> BytesIO:
     citation_re = re.compile(r'<span class="inline-citation">(.*?)</span>', re.IGNORECASE)
     bold_re = re.compile(r'\*\*(.*?)\*\*')
     
+    # --- UPDATED HEADER RECOGNITION LOGIC ---
     for line in full_text_lines:
         line = line.strip()
         if not line: continue
             
+        # 1. Clean line for header checking (remove * # :)
+        # This fixes the issue where "**QUESTION PRESENTED**" was ignored
+        clean_header_check = re.sub(r'[\*\#\:]', '', line).strip().upper()
+
         if header_re.search(line):
             doc.add_heading(header_re.search(line).group(1), level=1)
             continue
-        if line.upper() in ["QUESTION PRESENTED", "BRIEF ANSWER", "DISCUSSION"]:
-            doc.add_heading(line, level=1)
+            
+        # 2. Check strict list against cleaned line
+        if clean_header_check in ["QUESTION PRESENTED", "BRIEF ANSWER", "DISCUSSION"]:
+            doc.add_heading(clean_header_check, level=1)
             continue
 
         clean_line = citation_re.sub(r'\1', line) 
@@ -457,7 +464,8 @@ RULES FOR CITATION (NON-NEGOTIABLE):
    - If a specific page number is not available, omit it, but keep the reporter volume and page.
 3. **STATUTES & CODE**: Use "N.J.S.A. 9:6-8.21" or "N.J.A.C. 10:129-1.1".
 4. **UNPUBLISHED**: Use format: "*Case Name*, No. A-XXXX-XX (App. Div. Month Day, Year)".
-5. **PLACEMENT**: Citations must be placed immediately following the proposition they support, inside the sentence or at the end, but BEFORE the period if possible, or as a standalone sentence if necessary.
+5. **BRIDGE CITATIONS (CRITICAL)**: If an unpublished case relies on a published precedent, you MUST cite the published precedent in a parenthetical.
+   - Example: "*DCPP v. A.B.*, No. A-1234-20 (App. Div. 2023) (citing *N.J. Div. of Youth & Family Servs. v. I.S.*, 202 N.J. 145 (2010))."
 
 STRICT FORMATTING:
 1. **NO MEMO HEADER**: DO NOT include a "To/From/Date" block. Start immediately with the header "QUESTION PRESENTED".
