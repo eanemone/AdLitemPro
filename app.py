@@ -44,7 +44,7 @@ logger = logging.getLogger("AdLitemPro")
 # --- UI SETUP ---
 st.set_page_config(page_title="AdLitem Pro", layout="wide", page_icon="⚖️")
 
-# --- CUSTOM CSS ---
+# --- CUSTOM CSS (ULTIMATE FOCUS FIX) ---
 st.markdown("""
 <style>
     .stApp { max-width: 1100px; margin: 0 auto; }
@@ -53,18 +53,39 @@ st.markdown("""
     .main-header { font-family: 'Helvetica Neue', sans-serif; font-size: 2.8rem; color: #FFFFFF; font-weight: 800; text-align: center; margin-bottom: 0.2rem; }
     .subtitle { font-size: 0.95rem; color: #94A3B8; text-align: center; margin-bottom: 2rem; font-weight: 400; letter-spacing: 0.05em; }
     
-    /* --- AGGRESSIVE INPUT FOCUS STYLING --- */
+    /* --- 1. GLOBAL INPUT OVERRIDES (The Nuclear Option) --- */
+    /* This forces ALL text inputs and textareas to use Blue on Focus */
+    input:focus, textarea:focus {
+        border-color: #38BDF8 !important;
+        box-shadow: 0 0 0 1px #38BDF8 !important;
+        outline: none !important;
+    }
+    
+    /* --- 2. SPECIFIC CHAT INPUT TARGETING --- */
+    /* Target the container */
+    [data-testid="stChatInput"] {
+        border-color: #38BDF8 !important;
+        background-color: transparent !important;
+    }
+    
+    /* Target the inner textarea specifically */
+    [data-testid="stChatInput"] textarea {
+        caret-color: #38BDF8 !important; /* Blue cursor */
+    }
+    
+    /* FORCE focus state on the chat input textarea */
+    [data-testid="stChatInput"] textarea:focus {
+        border-color: #38BDF8 !important;
+        box-shadow: 0 0 0 1px #38BDF8 !important; /* This replaces the red glow */
+    }
+    
+    /* --- 3. STANDARD INPUTS (Login, etc) --- */
     div[data-baseweb="input"]:focus-within {
         border-color: #38BDF8 !important;
         box-shadow: 0 0 0 1px #38BDF8 !important;
     }
-    div[data-baseweb="textarea"]:focus-within {
-        border-color: #38BDF8 !important;
-        box-shadow: 0 0 0 1px #38BDF8 !important;
-    }
-    [data-testid="stChatInput"] { border-color: transparent !important; }
     
-    /* Button Styling */
+    /* --- 4. BUTTONS --- */
     .stButton button { border-color: #38BDF8 !important; color: #38BDF8 !important; }
     .stButton button:hover { border-color: #0EA5E9 !important; color: #0EA5E9 !important; }
     .stButton button:focus { border-color: #38BDF8 !important; color: #38BDF8 !important; box-shadow: 0 0 0 1px #38BDF8 !important; }
@@ -86,15 +107,13 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- AUTHENTICATION GATE (FIXED) ---
+# --- AUTHENTICATION GATE ---
 def check_password():
-    # 1. Initialize State if missing
     if "password_correct" not in st.session_state:
         st.session_state["password_correct"] = False
     if "login_attempted" not in st.session_state:
         st.session_state["login_attempted"] = False
 
-    # 2. Define Callback
     def password_entered():
         st.session_state["login_attempted"] = True
         user = st.session_state.get("username", "")
@@ -102,17 +121,14 @@ def check_password():
         
         if (user in st.secrets["passwords"] and pwd == st.secrets["passwords"][user]):
             st.session_state["password_correct"] = True
-            # Optional: Clear credentials for security
             del st.session_state["password"] 
             del st.session_state["username"]
         else:
             st.session_state["password_correct"] = False
 
-    # 3. If Logged In, Return True immediately
     if st.session_state["password_correct"]:
         return True
 
-    # 4. Render Login Form (If not logged in)
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown('<div style="margin-top: 80px;"></div>', unsafe_allow_html=True)
@@ -123,7 +139,6 @@ def check_password():
         st.text_input("Username", key="username")
         st.text_input("Password", type="password", on_change=password_entered, key="password")
         
-        # 5. Show Error ONLY if attempted
         if st.session_state["login_attempted"] and not st.session_state["password_correct"]:
             st.error("😕 Access Denied")
             
