@@ -36,7 +36,7 @@ BM25_PATH = os.path.join(BASE_DIR, "bm25_retriever.pkl")
 COLLECTION_NAME = "legal_cases_eyecite"
 
 PREFERRED_MODEL = "gpt-4o" 
-TEMPERATURE = 0.5  # Slightly increased for more creative/comprehensive synthesis
+TEMPERATURE = 0.5 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AdLitemPro")
@@ -44,35 +44,35 @@ logger = logging.getLogger("AdLitemPro")
 # --- UI SETUP ---
 st.set_page_config(page_title="AdLitem Pro", layout="wide", page_icon="⚖️")
 
-# --- CUSTOM CSS (NUCLEAR BLUE THEME V3.1) ---
+# --- CUSTOM CSS (FIXED FOCUS COLORS) ---
 st.markdown("""
 <style>
     .stApp { max-width: 1100px; margin: 0 auto; }
     
-    /* BRANDING & HEADERS */
+    /* BRANDING */
     .main-header { font-family: 'Helvetica Neue', sans-serif; font-size: 2.8rem; color: #FFFFFF; font-weight: 800; text-align: center; margin-bottom: 0.2rem; }
     .subtitle { font-size: 0.95rem; color: #94A3B8; text-align: center; margin-bottom: 2rem; font-weight: 400; letter-spacing: 0.05em; }
     
-    /* --- TARGETED INPUT STYLING (FIX RED BORDER) --- */
-    /* 1. Generic Input/Textarea Focus (Covers standard Streamlit inputs) */
-    .stTextInput input:focus, 
-    .stTextArea textarea:focus {
+    /* --- AGGRESSIVE INPUT FOCUS STYLING --- */
+    
+    /* 1. Target Text Inputs (Username, etc.) */
+    div[data-baseweb="input"]:focus-within {
+        border-color: #38BDF8 !important;
+        box-shadow: 0 0 0 1px #38BDF8 !important;
+    }
+    
+    /* 2. Target Text Areas (Chat Input) */
+    div[data-baseweb="textarea"]:focus-within {
         border-color: #38BDF8 !important;
         box-shadow: 0 0 0 1px #38BDF8 !important;
     }
 
-    /* 2. Chat Input Specifics */
+    /* 3. Target the Chat Input Container specifically */
     [data-testid="stChatInput"] {
-        border-color: #38BDF8 !important;
+        border-color: transparent !important; /* Let the inner textarea handle the border */
     }
     
-    [data-testid="stChatInput"] textarea:focus {
-        border-color: #38BDF8 !important;
-        box-shadow: 0 0 0 1px #38BDF8 !important; 
-        outline: none !important;
-    }
-
-    /* 3. Button Styling */
+    /* 4. Button Styling */
     .stButton button {
         border-color: #38BDF8 !important;
         color: #38BDF8 !important;
@@ -80,6 +80,11 @@ st.markdown("""
     .stButton button:hover {
         border-color: #0EA5E9 !important;
         color: #0EA5E9 !important;
+    }
+    .stButton button:focus {
+        border-color: #38BDF8 !important;
+        color: #38BDF8 !important;
+        box-shadow: 0 0 0 1px #38BDF8 !important;
     }
 
     /* MEMO STYLES */
@@ -123,16 +128,6 @@ def check_password():
             st.markdown('<div class="subtitle">AUTHORIZED PERSONNEL ONLY</div>', unsafe_allow_html=True)
             st.text_input("Username", key="username")
             st.text_input("Password", type="password", on_change=password_entered, key="password")
-        return False
-    elif not st.session_state["password_correct"]:
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.markdown('<div style="margin-top: 80px;"></div>', unsafe_allow_html=True)
-            st.markdown('<div class="main-header">AdLitem<span style="color:#38BDF8">Pro</span></div>', unsafe_allow_html=True)
-            st.markdown(credit_html, unsafe_allow_html=True)
-            st.markdown('<div class="subtitle">AUTHORIZED PERSONNEL ONLY</div>', unsafe_allow_html=True)
-            st.text_input("Username", key="username")
-            st.text_input("Password", type="password", on_change=password_entered, key="password")
             st.error("😕 Access Denied")
         return False
     return True
@@ -162,7 +157,6 @@ def enforce_citations(text: str) -> str:
     text = re.sub(r'(N\.J\.A\.C\.|N\.J\.S\.A\.|N\.J\.|N\.J\. Super\.)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
 
     # Normalize Admin Code: NJAC, N.J.A.C -> N.J.A.C.
-    # We look for "N", optional dots, "J", optional dots, "A", optional dots, "C", optional dots, then digits
     text = re.sub(
         r'(?i)\bN\.?J\.?A\.?C\.?\s*(\d+[:\-])', 
         r'N.J.A.C. \1', 
@@ -187,35 +181,26 @@ def enforce_citations(text: str) -> str:
     return text
 
 def strip_redundant_headers(text: str) -> str:
-    """Removes AI-generated headers (e.g. '**Brief Answer**') that duplicate our UI headers."""
     lines = text.split('\n')
     cleaned_lines = []
-    
-    # Matches: **Brief Answer**, ## Discussion, Brief Answer, etc.
     redundant_pattern = re.compile(r'^[\*\#\s]*(Brief Answer|Discussion)[\*\#\s]*$', re.IGNORECASE)
-    
     for line in lines:
-        if redundant_pattern.match(line.strip()):
-            continue # Skip this line
+        if redundant_pattern.match(line.strip()): continue
         cleaned_lines.append(line)
-        
     return "\n".join(cleaned_lines)
 
 # --- WORD DOC GENERATOR ---
 def create_docx(content: str) -> BytesIO:
     doc = Document()
     
-    # Title
     title = doc.add_heading('Legal Research Memo', 0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph(f"Generated by AdLitem Pro | {time.strftime('%B %d, %Y')}")
     doc.add_paragraph("__________________________________________________________________")
 
-    # Pre-clean Content
-    content = enforce_citations(content) # Fix split lines before processing
+    content = enforce_citations(content)
     content = strip_redundant_headers(content)
 
-    # Split content
     parts = content.split("===SECTION_BREAK===")
     full_text_lines = []
     
@@ -228,16 +213,14 @@ def create_docx(content: str) -> BytesIO:
     else:
         full_text_lines = content.split('\n')
 
-    # Regex Config
     header_re = re.compile(r'<div class="memo-header">(.*?)</div>', re.IGNORECASE)
     citation_re = re.compile(r'<span class="inline-citation">(.*?)</span>', re.IGNORECASE)
-    bold_re = re.compile(r'\*\*(.*?)\*\*') # Finds **Bold Text**
+    bold_re = re.compile(r'\*\*(.*?)\*\*')
     
     for line in full_text_lines:
         line = line.strip()
         if not line: continue
             
-        # Headers
         if header_re.search(line):
             doc.add_heading(header_re.search(line).group(1), level=1)
             continue
@@ -245,20 +228,17 @@ def create_docx(content: str) -> BytesIO:
             doc.add_heading(line, level=1)
             continue
 
-        # Clean HTML Citations for Word
         clean_line = citation_re.sub(r'\1', line) 
         clean_line = clean_plain_text(clean_line)
         
-        # Paragraph + Markdown Bolding
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         
-        # Parse "**" bolding
         segments = bold_re.split(clean_line)
         for i, segment in enumerate(segments):
             if not segment: continue
             run = p.add_run(segment)
-            if i % 2 == 1: # Odd segments are inside **markers**
+            if i % 2 == 1:
                 run.bold = True
 
     buffer = BytesIO()
@@ -267,13 +247,9 @@ def create_docx(content: str) -> BytesIO:
     return buffer
 
 def render_memo_ui(content: str, key_idx: int):
-    # 1. Strip redundant headers so UI is clean
     content = strip_redundant_headers(content)
-    
-    # 2. Enforce Blue Citations & Fix Broken Lines
     content = enforce_citations(content)
     
-    # 3. Render HTML
     if "===SECTION_BREAK===" in content:
         parts = content.split("===SECTION_BREAK===")
         brief = parts[0].strip()
@@ -288,7 +264,6 @@ def render_memo_ui(content: str, key_idx: int):
     else:
         st.markdown(f'<div class="memo-container"><div class="discussion-box">{content}</div></div>', unsafe_allow_html=True)
 
-    # 4. Download Button
     doc_file = create_docx(content)
     st.download_button(
         label="📄 Download Memo as Word Doc",
@@ -305,7 +280,7 @@ def get_badge_label(metadata):
     if dtype == "cic_manual": return "CIC MANUAL"
     return "PUBLISHED" if metadata.get("is_published") else "UNPUBLISHED"
 
-# --- NEW: HISTORY CONTEXTUALIZATION ---
+# --- HISTORY CONTEXT ---
 def rewrite_query(original_input, chat_history):
     if not chat_history: return original_input
     llm = ChatOpenAI(model=PREFERRED_MODEL, temperature=0.3)
@@ -331,7 +306,7 @@ def get_retriever():
         vectorstore=vectorstore, 
         docstore=store, 
         child_splitter=RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100),
-        search_kwargs={"k": 20} # Increased retrieval count for deeper analysis
+        search_kwargs={"k": 20}
     )
     
     if os.path.exists(BM25_PATH):
@@ -445,7 +420,7 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     status.update(label=f"Found {len(st.session_state.last_sources)} authorities.", state="complete")
                     progress_bar.progress(70, text="Drafting Research Memo...")
 
-                    # --- ENHANCED SYSTEM PROMPT FOR DEEP ANALYSIS ---
+                    # --- SYSTEM PROMPT ---
                     llm = ChatOpenAI(model=PREFERRED_MODEL, temperature=TEMPERATURE)
                     sys_prompt = """You are a Senior Legal Research Attorney. Write a formal Research Memo based ONLY on provided SOURCES.
 
