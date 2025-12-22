@@ -36,7 +36,7 @@ BM25_PATH = os.path.join(BASE_DIR, "bm25_retriever.pkl")
 COLLECTION_NAME = "legal_cases_eyecite"
 
 PREFERRED_MODEL = "gpt-4o" 
-TEMPERATURE = 0.2 # Lowered significantly for strict adherence
+TEMPERATURE = 0.2  # Low temperature for strict formatting adherence
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AdLitemPro")
@@ -90,7 +90,7 @@ st.markdown("""
     .discussion-box { background-color: #FFFFFF; color: #1E293B; padding: 32px; font-family: 'Georgia', serif; font-size: 1.1rem; line-height: 1.8; }
     .memo-header { color: #0369A1; font-weight: 800; font-size: 1.4rem; margin-top: 1.5rem; margin-bottom: 0.8rem; font-family: 'Helvetica Neue', sans-serif; text-transform: uppercase; letter-spacing: 0.03em; }
     
-    /* CITATION STYLING */
+    /* CITATION STYLING - FULL BLUE SCANNABILITY */
     .inline-citation { color: #0284c7; font-weight: 700; font-size: 0.95em; }
 
     /* AUTHORITY LIST */
@@ -154,13 +154,14 @@ def clean_llm_output(text: str) -> str:
     text = re.sub(r'\s*```$', '', text)
     return text.strip()
 
-# --- CITATION STABILIZATION ENGINE (V4 - THE "SUPER GLUE") ---
+# --- CITATION STABILIZATION ENGINE (V4 - SCANNABILITY & STITCHING) ---
 def enforce_citations(text: str) -> str:
-    # 0. NUCLEAR OPTION: Scrub any remaining [Source X]
+    # 0. Scrub any remaining placeholders
     text = re.sub(r'\[Source \d+\]', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\(Source \d+\)', '', text, flags=re.IGNORECASE)
 
-    # 1. FIX SPLIT LINES (Aggressive)
+    # 1. FIX SPLIT LINES (Aggressive Stitching)
+    # Basic Statute/Case splits
     text = re.sub(r'(\bN\.?J\.?[SA]\.?[AC]\.?)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
     text = re.sub(r'(\bv\.|In re)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
     text = re.sub(r'(N\.J\.)\s*\n\s*(Super\.)', r'\1 \2', text, flags=re.IGNORECASE)
@@ -168,7 +169,7 @@ def enforce_citations(text: str) -> str:
     text = re.sub(r'(N\.J\.|Super\.)\s*\n\s*(\d+)', r'\1 \2', text, flags=re.IGNORECASE)
     
     # 1b. Fix Complex Case Splits (e.g. "v. Party \n in re Child")
-    # Matches: "v." + text + newline + "in re"
+    # This specifically fixes the issue seen in your sample.docx
     text = re.sub(r'(v\..*?)\s*\n\s*(in re)', r'\1 \2', text, flags=re.IGNORECASE)
 
     # 2. NORMALIZE FORMATS
@@ -176,23 +177,22 @@ def enforce_citations(text: str) -> str:
     text = re.sub(r'(?i)\bN\.?J\.?A\.?C\.?\s*(\d+[:\-])', r'N.J.A.C. \1', text)
     text = re.sub(r'(?i)\bN\.?J\.?S\.?A\.?\s*(\d+[:\-])', r'N.J.S.A. \1', text)
     
-    # --- BLUE HIGHLIGHTING LOGIC ---
+    # --- BLUE HIGHLIGHTING LOGIC (FULL CAPTURE) ---
     
-    # 3. Highlight Statutes/Codes
+    # 3. Statutes/Codes
     statute_pattern = r'(?<!class="inline-citation">)\b(N\.J\.A\.C\.|N\.J\.S\.A\.)\s*(\d+[:\-][\d\-\.\w]+)'
     text = re.sub(statute_pattern, r'<span class="inline-citation">\1 \2</span>', text, flags=re.IGNORECASE)
     
-    # 4. Highlight Policy
+    # 4. Policy
     policy_pattern = r'(?<!class="inline-citation">)\b(CP\s*&\s*P-[IVX\d\-\w]+)'
     text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
-    # 5. Highlight Published Cases WITH Name 
-    # Matches: *Name*, Vol Reporter Page
+    # 5. Published Cases WITH Name (Matches *Case Name*, 205 N.J. 17)
+    # The regex now looks for the asterisk-wrapped name before the citation
     case_pub_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?\d+\s+N\.J\.(?:\s+Super\.)?\s+\d+(?:\s*\(\w+\s+\d{4}\))?)'
     text = re.sub(case_pub_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
 
-    # 6. Highlight Unpublished/Docket WITH Name 
-    # Matches: *Name*, No. A-123 (App. Div. Date)
+    # 6. Unpublished/Docket WITH Name (Matches *Case Name*, No. A-123...)
     docket_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?No\.\s+A-\d+-\d+(?:T\d+)?(?:\s*\([^)]+\))?)'
     text = re.sub(docket_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
@@ -201,7 +201,7 @@ def enforce_citations(text: str) -> str:
 def strip_redundant_headers(text: str) -> str:
     lines = text.split('\n')
     cleaned_lines = []
-    # Strip any lines that look like "To:", "From:", or "Legal Research Memo"
+    # Strip headers like "To:", "From:", or "Legal Research Memo"
     header_junk = re.compile(r'^(To:|From:|Re:|Date:|Legal Research Memo).*', re.IGNORECASE)
     
     for line in lines:
@@ -444,7 +444,7 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                             if not docket:
                                 m = re.search(r'No\.\s*([\w-]+)', cite_str)
                                 docket = m.group(1) if m else cite_str
-                            link = f"https://scholar.google.com/scholar?hl=en&as_sdt=4%2C31&q={urllib.parse.quote(docket)}"
+                            link = f"https://scholar.google.com/scholar?hl=en&as_sdt=4%2C31&q={urllib.parse.quote(docket)}&oq="
                             
                         st.session_state.last_sources.append({"label": get_badge_label(meta), "title": title, "cite": cite_str, "snippet": content[:350], "link": link})
                         
