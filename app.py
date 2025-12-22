@@ -36,7 +36,7 @@ BM25_PATH = os.path.join(BASE_DIR, "bm25_retriever.pkl")
 COLLECTION_NAME = "legal_cases_eyecite"
 
 PREFERRED_MODEL = "gpt-4o" 
-TEMPERATURE = 0.2  # Low temperature for strict formatting adherence
+TEMPERATURE = 0.2 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AdLitemPro")
@@ -48,38 +48,17 @@ st.set_page_config(page_title="AdLitem Pro", layout="wide", page_icon="⚖️")
 st.markdown("""
 <style>
     .stApp { max-width: 1100px; margin: 0 auto; }
-    
-    /* BRANDING */
     .main-header { font-family: 'Helvetica Neue', sans-serif; font-size: 2.8rem; color: #FFFFFF; font-weight: 800; text-align: center; margin-bottom: 0.2rem; }
     .subtitle { font-size: 0.95rem; color: #94A3B8; text-align: center; margin-bottom: 2rem; font-weight: 400; letter-spacing: 0.05em; }
     
-    /* --- GLOBAL INPUT OVERRIDES --- */
-    input:focus, textarea:focus {
-        border-color: #38BDF8 !important;
-        box-shadow: 0 0 0 1px #38BDF8 !important;
-        outline: none !important;
-    }
+    /* INPUT OVERRIDES */
+    input:focus, textarea:focus { border-color: #38BDF8 !important; box-shadow: 0 0 0 1px #38BDF8 !important; outline: none !important; }
+    [data-testid="stChatInput"] { border-color: #38BDF8 !important; background-color: transparent !important; }
+    [data-testid="stChatInput"] textarea { caret-color: #38BDF8 !important; }
+    [data-testid="stChatInput"] textarea:focus { border-color: #38BDF8 !important; box-shadow: 0 0 0 1px #38BDF8 !important; }
+    div[data-baseweb="input"]:focus-within { border-color: #38BDF8 !important; box-shadow: 0 0 0 1px #38BDF8 !important; }
     
-    /* --- CHAT INPUT TARGETING --- */
-    [data-testid="stChatInput"] {
-        border-color: #38BDF8 !important;
-        background-color: transparent !important;
-    }
-    [data-testid="stChatInput"] textarea {
-        caret-color: #38BDF8 !important; 
-    }
-    [data-testid="stChatInput"] textarea:focus {
-        border-color: #38BDF8 !important;
-        box-shadow: 0 0 0 1px #38BDF8 !important; 
-    }
-    
-    /* --- STANDARD INPUTS --- */
-    div[data-baseweb="input"]:focus-within {
-        border-color: #38BDF8 !important;
-        box-shadow: 0 0 0 1px #38BDF8 !important;
-    }
-    
-    /* --- BUTTONS --- */
+    /* BUTTONS */
     .stButton button { border-color: #38BDF8 !important; color: #38BDF8 !important; }
     .stButton button:hover { border-color: #0EA5E9 !important; color: #0EA5E9 !important; }
     .stButton button:focus { border-color: #38BDF8 !important; color: #38BDF8 !important; box-shadow: 0 0 0 1px #38BDF8 !important; }
@@ -131,13 +110,10 @@ def check_password():
         st.markdown('<div class="main-header">AdLitem<span style="color:#38BDF8">Pro</span></div>', unsafe_allow_html=True)
         st.markdown("""<div style="text-align: center; margin-bottom: 15px;"><span style="font-family: 'Helvetica Neue', sans-serif; font-size: 0.75rem; color: #64748B; letter-spacing: 0.1em; text-transform: uppercase;">Created by <span style="color: #E2E8F0; font-weight: 600;">Ernest Anemone, Esq.</span></span></div>""", unsafe_allow_html=True)
         st.markdown('<div class="subtitle">AUTHORIZED PERSONNEL ONLY</div>', unsafe_allow_html=True)
-        
         st.text_input("Username", key="username")
         st.text_input("Password", type="password", on_change=password_entered, key="password")
-        
         if st.session_state["login_attempted"] and not st.session_state["password_correct"]:
             st.error("😕 Access Denied")
-            
     return False
 
 if not check_password():
@@ -154,46 +130,57 @@ def clean_llm_output(text: str) -> str:
     text = re.sub(r'\s*```$', '', text)
     return text.strip()
 
-# --- CITATION STABILIZATION ENGINE (V4 - SCANNABILITY & STITCHING) ---
+# --- NEW: HEADER CLEANER ---
+def clean_markdown_headers(text: str) -> str:
+    """Strips markdown styling from standard headers to ensure consistent formatting."""
+    # Matches: **QUESTION PRESENTED**, ## BRIEF ANSWER, etc.
+    headers = ["QUESTION PRESENTED", "BRIEF ANSWER", "DISCUSSION", "ANALYSIS", "CONCLUSION"]
+    for header in headers:
+        # Regex to find the header with any markdown fluff around it
+        pattern = re.compile(r'[\#\*\_]+' + re.escape(header) + r'[\#\*\_]*', re.IGNORECASE)
+        # Replace with just the plain header
+        text = re.sub(pattern, header, text)
+    return text
+
+# --- CITATION STABILIZATION ENGINE (V5 - THE "BENNETT" FIX) ---
 def enforce_citations(text: str) -> str:
-    # 0. Scrub any remaining placeholders
+    # 0. Scrub placeholders
     text = re.sub(r'\[Source \d+\]', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\(Source \d+\)', '', text, flags=re.IGNORECASE)
 
-    # 1. FIX SPLIT LINES (Aggressive Stitching)
-    # Basic Statute/Case splits
+    # 1. FIX SPLIT LINES (Aggressive Stitching for Complex Cases)
     text = re.sub(r'(\bN\.?J\.?[SA]\.?[AC]\.?)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
     text = re.sub(r'(\bv\.|In re)\s*\n\s*', r'\1 ', text, flags=re.IGNORECASE)
     text = re.sub(r'(N\.J\.)\s*\n\s*(Super\.)', r'\1 \2', text, flags=re.IGNORECASE)
     text = re.sub(r'(\d+)\s*\n\s*(N\.J\.|Super\.)', r'\1 \2', text, flags=re.IGNORECASE)
     text = re.sub(r'(N\.J\.|Super\.)\s*\n\s*(\d+)', r'\1 \2', text, flags=re.IGNORECASE)
     
-    # 1b. Fix Complex Case Splits (e.g. "v. Party \n in re Child")
-    # This specifically fixes the issue seen in your PDF
+    # 1b. Complex Family Part Splits (e.g. "v. A.H. \n in re K.J.")
     text = re.sub(r'(v\..*?)\s*\n\s*(in re)', r'\1 \2', text, flags=re.IGNORECASE)
+    text = re.sub(r'(v\..*?)\s*\n\s*(Guardianship of)', r'\1 \2', text, flags=re.IGNORECASE)
 
     # 2. NORMALIZE FORMATS
     text = re.sub(r'(?i)N\.?J\.?\s*Admin\.?\s*Code\s*§?\s*', 'N.J.A.C. ', text)
     text = re.sub(r'(?i)\bN\.?J\.?A\.?C\.?\s*(\d+[:\-])', r'N.J.A.C. \1', text)
     text = re.sub(r'(?i)\bN\.?J\.?S\.?A\.?\s*(\d+[:\-])', r'N.J.S.A. \1', text)
     
-    # --- BLUE HIGHLIGHTING LOGIC (FULL CAPTURE) ---
+    # --- BLUE HIGHLIGHTING (FULL CAPTURE) ---
     
-    # 3. Statutes/Codes
+    # 3. Statutes & Policy
     statute_pattern = r'(?<!class="inline-citation">)\b(N\.J\.A\.C\.|N\.J\.S\.A\.)\s*(\d+[:\-][\d\-\.\w]+)'
     text = re.sub(statute_pattern, r'<span class="inline-citation">\1 \2</span>', text, flags=re.IGNORECASE)
     
-    # 4. Policy
     policy_pattern = r'(?<!class="inline-citation">)\b(CP\s*&\s*P-[IVX\d\-\w]+)'
     text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
-    # 5. Published Cases WITH Name (Matches *Case Name*, 205 N.J. 17)
-    # The regex now looks for the asterisk-wrapped name before the citation
+    # 4. Published Cases (Matches: *Name*, Vol Reporter Page (Year))
     case_pub_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?\d+\s+N\.J\.(?:\s+Super\.)?\s+\d+(?:\s*\(\w+\s+\d{4}\))?)'
     text = re.sub(case_pub_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
 
-    # 6. Unpublished/Docket WITH Name (Matches *Case Name*, No. A-123...)
-    docket_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?No\.\s+A-\d+-\d+(?:T\d+)?(?:\s*\([^)]+\))?)'
+    # 5. UNPUBLISHED CASES (The "Bennett" Style Fix)
+    # Target: *Name*, No. A-123 (App. Div. Month Day, Year)
+    # Regex: Matches Italic Name + "No." + Docket + Date Parenthetical
+    docket_pattern = r'(?<!class="inline-citation">)((?:\*[^*]+?\*,\s+)?No\.\s+A-[\d\w-]+(?:\s*\([^)]+\))?)'
     text = re.sub(docket_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
     return text
@@ -201,9 +188,7 @@ def enforce_citations(text: str) -> str:
 def strip_redundant_headers(text: str) -> str:
     lines = text.split('\n')
     cleaned_lines = []
-    # Strip headers like "To:", "From:", or "Legal Research Memo"
     header_junk = re.compile(r'^(To:|From:|Re:|Date:|Legal Research Memo).*', re.IGNORECASE)
-    
     for line in lines:
         if header_junk.match(line.strip()): continue
         cleaned_lines.append(line)
@@ -217,6 +202,9 @@ def create_docx(content: str) -> BytesIO:
     doc.add_paragraph(f"Generated by AdLitem Pro | {time.strftime('%B %d, %Y')}")
     doc.add_paragraph("__________________________________________________________________")
 
+    # 1. Clean Headers First (Strip markdown)
+    content = clean_markdown_headers(content)
+    # 2. Fix Citations & Splits
     content = enforce_citations(content)
     content = strip_redundant_headers(content)
 
@@ -240,13 +228,13 @@ def create_docx(content: str) -> BytesIO:
         line = line.strip()
         if not line: continue
             
-        clean_header_check = re.sub(r'[\*\#\:]', '', line).strip().upper()
+        clean_header_check = line.strip().upper()
 
         if header_re.search(line):
             doc.add_heading(header_re.search(line).group(1), level=1)
             continue
             
-        if clean_header_check in ["QUESTION PRESENTED", "BRIEF ANSWER", "DISCUSSION"]:
+        if clean_header_check in ["QUESTION PRESENTED", "BRIEF ANSWER", "DISCUSSION", "ANALYSIS", "CONCLUSION"]:
             doc.add_heading(clean_header_check, level=1)
             continue
 
@@ -268,6 +256,7 @@ def create_docx(content: str) -> BytesIO:
     return buffer
 
 def render_memo_ui(content: str, key_idx: int):
+    content = clean_markdown_headers(content)
     content = strip_redundant_headers(content)
     content = enforce_citations(content)
     
@@ -451,7 +440,7 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     status.update(label=f"Found {len(st.session_state.last_sources)} authorities.", state="complete")
                     progress_bar.progress(70, text="Drafting Research Memo...")
 
-                    # --- SYSTEM PROMPT (CHAIN OF CUSTODY) ---
+                    # --- SYSTEM PROMPT (UPDATED FOR "BENNETT" STYLE) ---
                     llm = ChatOpenAI(model=PREFERRED_MODEL, temperature=TEMPERATURE)
                     sys_prompt = """You are a Senior Legal Research Attorney. Write a **comprehensive and heavily cited** Research Memo based ONLY on provided SOURCES.
 
@@ -461,14 +450,15 @@ STRICT FORMATTING:
 3. Use '===SECTION_BREAK===' ONLY once, after 'Brief Answer'.
 
 CITATION RULES (CRITICAL):
-1. **CHAIN OF CUSTODY**: The documents in your Context are UNPUBLISHED CASES.
-   - **DO NOT** cite a Published Case directly unless it appears as a primary source.
+1. **UNPUBLISHED CASES (NJ STYLE)**: You MUST adapt the standard Bluebook format for NJ unpublished opinions.
+   - Format: *Case Name*, No. [Docket] (App. Div. Month Day, Year).
+   - Example: *State v. Bennett*, No. A-1234-23 (App. Div. Oct. 21, 2025).
+2. **CHAIN OF CUSTODY**:
    - **YOU MUST** cite the unpublished case in the text as the authority.
    - **BRIDGE CITATION**: If the unpublished case relies on a published precedent, format it as:
-     *[Unpublished Case Name]*, [Docket] (App. Div. [Date]) (citing *[Published Case Name]*, [Citation]).
+     *State v. Bennett*, No. A-1234-23 (App. Div. Oct. 21, 2025) (citing *State v. Smith*, 123 N.J. 456 (2010)).
    - FAILURE TO PROVIDE THIS BRIDGE CITATION IS A CRITICAL ERROR.
 
-2. **CITATION PLACEMENT**: Citations must be placed immediately following the proposition they support.
 3. **BLUEBOOK**: Use 'N.J.S.A.' and 'N.J.A.C.' (always with periods)."""
                     
                     chain = ChatPromptTemplate.from_messages([("system", sys_prompt), ("user", "CITATIONS: {citations}\n\nCONTEXT: {context}\n\nISSUE: {input}")]) | llm | StrOutputParser()
