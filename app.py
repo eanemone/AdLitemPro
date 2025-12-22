@@ -35,8 +35,8 @@ DOC_STORE_PATH = os.path.join(BASE_DIR, "legal_docstore_fs")
 BM25_PATH = os.path.join(BASE_DIR, "bm25_retriever.pkl")
 COLLECTION_NAME = "legal_cases_eyecite"
 
-PREFERRED_MODEL = "gpt-4o" 
-TEMPERATURE = 0.4 
+PREFERRED_MODEL = "gpt-5.2" 
+TEMPERATURE = 0.5 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AdLitemPro")
@@ -426,21 +426,19 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
 
                     # --- SYSTEM PROMPT (AGRESSIVELY UPDATED FOR DEPTH) ---
                     llm = ChatOpenAI(model=PREFERRED_MODEL, temperature=TEMPERATURE)
-                    sys_prompt = """You are a Senior Legal Research Attorney. Write a **comprehensive and heavily cited** Research Memo based ONLY on provided SOURCES.
+                    sys_prompt = """You are a Senior Legal Research Attorney. Write a formal Research Memo based ONLY on provided SOURCES.
 
 HERMENEUTIC REASONING RULE: 
 Before drafting, interpret the query within the broader context of New Jersey child welfare law. 
-Extract and apply the underlying legal principles from the most analogous sources.
+If a specific fact pattern (e.g., age, specific placement type) is not an exact match, do not lead with a 'no sources found' disclaimer. 
+Instead, extract and apply the underlying legal principles, standards of proof, and judicial reasoning from the sources that are most analogous to the user's issue.
 
-STRICT FORMATTING & CITATION RULES:
-1. **DISCUSSION SECTION MUST BE ROBUST**: Do not summarize briefly. Analyze conflicting authorities, synthesize rules, and discuss the application of statutes (N.J.S.A.), code (N.J.A.C.), and policy (CP&P) alongside case law.
-2. **CITATION DENSITY**: Every legal proposition, definition, or standard must be IMMEDIATELY followed by an inline citation to the specific source number or name. 
-3. **DO NOT SPLIT CITATIONS**: Keep case names and dockets on the same line.
-4. **UNPUBLISHED CASES**: Cite as "[Case Name], [Docket No.] (unpublished) (App. Div. [Year])". 
-   - CRITICAL: If the text says it relies on a published case, append "(citing [Published Case Name])".
-5. **BLUEBOOK**: Use 'N.J.S.A.' and 'N.J.A.C.' (always with periods).
-
-6. Use '===SECTION_BREAK===' ONLY once, after 'Brief Answer'."""
+STRICT FORMATTING RULES:
+1. No memo headers. Start at 'Question Presented'.
+2. Wrap all main section headers in <div class="memo-header">HEADER TEXT</div>.
+3. For claims, use inline citations: <span class="inline-citation">Bluebook Cite</span>.
+4. NEVER cite PDF filenames. Extract primary law instead.
+5. Use '===SECTION_BREAK===' ONLY once, after 'Brief Answer'."""
                     
                     chain = ChatPromptTemplate.from_messages([("system", sys_prompt), ("user", "CITATIONS: {citations}\n\nCONTEXT: {context}\n\nISSUE: {input}")]) | llm | StrOutputParser()
                     response = chain.invoke({"input": search_query, "context": "\n\n".join(context_blocks), "citations": citation_map})
