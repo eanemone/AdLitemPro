@@ -155,8 +155,14 @@ def enforce_citations(text: str) -> str:
     statute_pattern = r'(?<!class="inline-citation">)(N\.J\.A\.C\.|N\.J\.S\.A\.|N\.J\.|N\.J\. Super\.)\s*(\d+[:\-]\d+[\d\-\.\w]*)'
     text = re.sub(statute_pattern, r'<span class="inline-citation">\1 \2</span>', text, flags=re.IGNORECASE)
     
-    policy_pattern = r'(?<!class="inline-citation">)(CP\s*&\s*P-[IVX\d\-\w]+)'
+    # Update to match CPP format
+    policy_pattern = r'(?<!class="inline-citation">)(CPP[-\s][IVX\d\-\w]+)'
     text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
+    
+    # Also catch CIC Manual references
+    cic_pattern = r'(?<!class="inline-citation">)(CIC Manual\s*§?\s*\d+\.\d+)'
+    text = re.sub(cic_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
+    
     return text
 
 def strip_redundant_headers(text: str) -> str:
@@ -274,8 +280,56 @@ def get_badge_label(metadata):
     dtype = metadata.get("type", "case")
     if dtype == "policy": return "DCF POLICY"
     if dtype == "statute": return "STATUTE"
-    if dtype == "cic_manual": return "CIC MANUAL"
+    if dtype == "manual": return "CIC MANUAL"
     return "PUBLISHED" if metadata.get("is_published") else "UNPUBLISHED"
+
+# --- IMPROVED CITATION FORMATTER ---
+def format_citation(meta: dict) -> str:
+    """
+    Extract proper citation from metadata based on type.
+    Now works with actual DB structure: display_name, source, type.
+    """
+    doc_type = meta.get("type", "case")
+    
+    # Try bluebook first (for cases)
+    cite_str = clean_plain_text(meta.get("bluebook", ""))
+    
+    # If bluebook is empty, use display_name or source
+    if not cite_str:
+        cite_str = meta.get("display_name", "") or meta.get("source", "")
+    
+    # Type-specific formatting
+    if doc_type == "manual":
+        # CIC_Manual_1108 -> CIC Manual § 11.08
+        if "CIC" in cite_str or "cic" in cite_str.lower():
+            match = re.search(r'(\d{2})(\d{2})', cite_str)
+            if match:
+                return f"CIC Manual § {match.group(1)}.{match.group(2)}"
+            return "NJ DCF CIC Manual"
+    
+    elif doc_type == "policy":
+        # CPP-IV-E-1-1100 -> CP&P-IV-E-1-1100
+        if "CPP" in cite_str or "cpp" in cite_str.lower():
+            # Clean up the format
+            cite_str = re.sub(r'\.pdf$', '', cite_str, flags=re.IGNORECASE)
+            cite_str = cite_str.replace("CPP", "CP&P")
+            return cite_str
+    
+    elif doc_type == "statute":
+        # Extract N.J.A.C. or N.J.S.A. format
+        if "njac" in cite_str.lower() or "n.j.a.c" in cite_str.lower():
+            match = re.search(r'(\d+:\d+[\d\-\.]*)', cite_str)
+            if match:
+                return f"N.J.A.C. {match.group(1)}"
+        elif "njsa" in cite_str.lower() or "n.j.s.a" in cite_str.lower():
+            match = re.search(r'(\d+[A-Z]?:\d+[\d\-\.]*)', cite_str)
+            if match:
+                return f"N.J.S.A. {match.group(1)}"
+    
+    # Clean up file extensions if still present
+    cite_str = re.sub(r'\.(pdf|txt)$', '', cite_str, flags=re.IGNORECASE)
+    
+    return cite_str if cite_str else "Authority"
 
 # --- NEW: HISTORY CONTEXTUALIZATION ---
 def rewrite_query(original_input, chat_history):
@@ -391,28 +445,32 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     progress_bar.progress(50, text="Sanitizing authorities...")
                     for i, doc in enumerate(unique_docs):
                         meta = doc.metadata
-                        cite_str = clean_plain_text(meta.get("bluebook", meta.get("source", "")))
-                        if ".pdf" in cite_str.lower() or ".txt" in cite_str.lower():
-                            if "cic" in cite_str.lower():
-                                sec = re.search(r'(\d+)[_.](\d+)', cite_str)
-                                cite_str = f"CIC Manual § {sec.group(1)}.{sec.group(2)}" if sec else "NJ DCF CIC Manual"
-                            else:
-                                cite_str = "NJ DCF Internal Policy"
+                        
+                        # Use the new citation formatter
+                        cite_str = format_citation(meta)
                         
                         content = clean_plain_text(doc.page_content)
                         title = clean_plain_text(meta.get("display_name", "Authority"))
+                        
                         context_blocks.append(f"SOURCE {i+1} [{meta.get('type','case').upper()} - {cite_str}]:\n{content}\n")
                         citation_map[i+1] = cite_str
                         
+                        # Fixed Google Scholar link - use proper format
                         link = None
                         if meta.get("type", "case") == "case":
-                            docket = meta.get("docket", "")
-                            if not docket:
-                                m = re.search(r'No\.\s*([\w-]+)', cite_str)
-                                docket = m.group(1) if m else cite_str
-                            link = f"https://scholar.google.com/scholar?q={urllib.parse.quote(docket)}"
-                            
-                        st.session_state.last_sources.append({"label": get_badge_label(meta), "title": title, "cite": cite_str, "snippet": content[:350], "link": link})
+                            # Use the full citation for Scholar search
+                            search_term = cite_str if cite_str else title
+                            # Clean up the search term for URL encoding
+                            search_term = re.sub(r'\s+', ' ', search_term).strip()
+                            link = f"https://scholar.google.com/scholar?hl=en&as_sdt=4%2C31&q={urllib.parse.quote(search_term)}&oq="
+                        
+                        st.session_state.last_sources.append({
+                            "label": get_badge_label(meta), 
+                            "title": title, 
+                            "cite": cite_str, 
+                            "snippet": content[:350], 
+                            "link": link
+                        })
                         
                     status.update(label=f"Found {len(st.session_state.last_sources)} authorities.", state="complete")
                     progress_bar.progress(70, text="Drafting Research Memo...")
@@ -423,8 +481,11 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     STYLING RULES (CRITICAL):
                     1. You MUST cite your sources. Every claim must be followed by a citation from the provided CITATIONS list.
                     2. Format citations as: <span class="inline-citation">Actual Citation Text</span>. 
-                    3. Do NOT use the word 'Cite' as a placeholder. Use the actual text (e.g., 'N.J.A.C. 10:122-4.1').
+                    3. DO NOT use the word 'Cite' as a placeholder. Use the actual text from CITATIONS (e.g., 'CP&P-IV-E-1-1100' or 'CIC Manual § 11.08').
                     4. DO NOT split citations across lines.
+                    5. Use the EXACT citation text provided in the CITATIONS map - do not abbreviate or modify it.
+                    6. When citing policies, use the format 'CP&P-[section]' (e.g., CP&P-IV-E-1-1100).
+                    7. When citing the CIC Manual, use 'CIC Manual § [section]' (e.g., CIC Manual § 11.08).
                     
                     FORMAT:
                     - Start with 'Question Presented'.
