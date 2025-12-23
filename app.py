@@ -321,12 +321,16 @@ def format_citation(meta: dict) -> str:
             return "NJ DCF CIC Manual"
     
     elif doc_type == "policy":
-        # CPP-IV-E-1-1100 -> CP&P-IV-E-1-1100
+        # CPP-IV-E-1-1100 -> DCF Policy Manual CP&P-IV-E-1-1100
         if "CPP" in cite_str or "cpp" in cite_str.lower():
             # Clean up the format
             cite_str = re.sub(r'\.pdf$', '', cite_str, flags=re.IGNORECASE)
+            
+            # 1. Replace CPP with CP&P for display
             cite_str = cite_str.replace("CPP", "CP&P")
-            return cite_str
+            
+            # 2. Prepend the official manual title
+            return f"DCF Policy Manual {cite_str}"
     
     elif doc_type == "statute":
         # Extract N.J.A.C. or N.J.S.A. format
