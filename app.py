@@ -545,33 +545,33 @@ You will be penalized for failure to follow these formatting constraints.
    - Do NOT invent abbreviations.
    - Do NOT cite sources that are not in the provided list.
 """
+# --- 1. VALIDATION LOGIC ---
+                    # Create a string list of valid keys to enforce strict adherence
+                    valid_keys = ", ".join([f"'{k}'" for k in citation_map.values()])
+
+                    # --- 2. UPDATED CHAIN CONSTRUCTION ---
+                    # We inject the 'valid_keys' variable into the user prompt
+                    chain = ChatPromptTemplate.from_messages([
+                        ("system", sys_prompt),
+                        ("user", """
+                        AVAILABLE SOURCES:
+                        {context}
+                        
+                        ---------------------
+                        VALID CITATION KEYS (YOU MUST ONLY USE THESE EXACT STRINGS):
+                        [{valid_keys}]
+                        ---------------------
+                        
+                        QUESTION: {input}
+                        """)
+                    ]) | llm | StrOutputParser()
                     
-                    # NEW CODE TO PASTE
-# 1. Create the "Allow List" of citations
-valid_keys = ", ".join([f"'{k}'" for k in citation_map.values()])
-
-# 2. Inject valid_keys into the user prompt so the model sees the menu
-chain = ChatPromptTemplate.from_messages([
-    ("system", sys_prompt),
-    ("user", """
-    AVAILABLE SOURCES:
-    {context}
-    
-    ---------------------
-    VALID CITATION KEYS (YOU MUST ONLY USE THESE EXACT STRINGS):
-    [{valid_keys}]
-    ---------------------
-    
-    QUESTION: {input}
-    """)
-]) | llm | StrOutputParser()
-
-# 3. Run it (passing valid_keys into the template)
-response = chain.invoke({
-    "input": search_query, 
-    "context": "\n\n".join(context_blocks), 
-    "valid_keys": valid_keys 
-})
+                    # --- 3. EXECUTION ---
+                    response = chain.invoke({
+                        "input": search_query, 
+                        "context": "\n\n".join(context_blocks), 
+                        "valid_keys": valid_keys 
+                    })
                     
                     clean_resp = clean_llm_output(response)
                     progress_bar.progress(100, text="Memo Complete.")
@@ -579,7 +579,7 @@ response = chain.invoke({
                     progress_bar.empty()
                     st.session_state.messages.append({"role": "assistant", "content": clean_resp})
                     st.rerun()
-                    
+
                 except Exception as e:
                     st.error(f"Error: {e}")
                     progress_bar.empty()
