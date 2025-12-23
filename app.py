@@ -155,18 +155,19 @@ def clean_llm_output(text: str) -> str:
     return text.strip()
 
 # --- HEADER CLEANER & CITATION ENFORCER ---
-# UPDATED Policy Pattern:
-    # Captures optional "DCF Policy Manual" prefix + the CP&P code
-    # Matches: "DCF Policy Manual CP&P-III-C-2-600" OR just "CP&P-III-C-2-600"
+def enforce_citations(text: str) -> str:
+    """Finds missed citations and wraps them in HTML span tags."""
+    
+    # 1. Statute Pattern (N.J.S.A. etc)
+    statute_pattern = r'(?<!class="inline-citation">)(N\.J\.A\.C\.|N\.J\.S\.A\.|N\.J\.|N\.J\. Super\.)\s*(\d+[:\-]\d+[\d\-\.\w]*)'
+    text = re.sub(statute_pattern, r'<span class="inline-citation">\1 \2</span>', text, flags=re.IGNORECASE)
+    
+    # 2. UPDATED Policy Pattern
+    # Matches: "DCF Policy Manual CP&P-III..." OR just "CP&P-III..." OR "Form 10-98"
     policy_pattern = r'(?<!class="inline-citation">)((?:DCF\s+Policy\s+Manual\s+)?CP[&]?P[-\s][IVX\d\-\w\.]+|Form\s+10-98)'
     text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
-    # 2. UPDATED Policy Pattern (Catches CPP, CP&P, and Form 10-98 references)
-    # This regex now allows for an optional '&' and handles the specific '10.98' format
-    policy_pattern = r'(?<!class="inline-citation">)(CP[&]?P[-\s][IVX\d\-\w\.]+|Form\s+10-98)'
-    text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
-    
-    # 3. Existing Manual Pattern (Keep this)
+    # 3. CIC Manual Pattern
     cic_pattern = r'(?<!class="inline-citation">)(CIC Manual\s*§?\s*\d+\.\d+)'
     text = re.sub(cic_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
