@@ -157,14 +157,17 @@ def clean_llm_output(text: str) -> str:
 # --- HEADER CLEANER & CITATION ENFORCER ---
 def enforce_citations(text: str) -> str:
     """Finds missed citations and wraps them in HTML span tags."""
+    
+    # 1. Existing Statute Pattern (Keep this)
     statute_pattern = r'(?<!class="inline-citation">)(N\.J\.A\.C\.|N\.J\.S\.A\.|N\.J\.|N\.J\. Super\.)\s*(\d+[:\-]\d+[\d\-\.\w]*)'
     text = re.sub(statute_pattern, r'<span class="inline-citation">\1 \2</span>', text, flags=re.IGNORECASE)
     
-    # Update to match CPP format
-    policy_pattern = r'(?<!class="inline-citation">)(CPP[-\s][IVX\d\-\w]+)'
+    # 2. UPDATED Policy Pattern (Catches CPP, CP&P, and Form 10-98 references)
+    # This regex now allows for an optional '&' and handles the specific '10.98' format
+    policy_pattern = r'(?<!class="inline-citation">)(CP[&]?P[-\s][IVX\d\-\w\.]+|Form\s+10-98)'
     text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
-    # Also catch CIC Manual references
+    # 3. Existing Manual Pattern (Keep this)
     cic_pattern = r'(?<!class="inline-citation">)(CIC Manual\s*§?\s*\d+\.\d+)'
     text = re.sub(cic_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
@@ -487,96 +490,88 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
 
                     llm = ChatOpenAI(model=PREFERRED_MODEL, temperature=TEMPERATURE)
                     sys_prompt = """You are an Appellate Law Clerk. Write a formal Research Memo based ONLY on provided SOURCES.
-                    
-                    INTERPRETIVE APPROACH:
-                    Before drafting, engage in hermeneutic analysis:
-                    1. Consider the query holistically - understand the broader legal context and policy implications
-                    2. Examine each source in light of the whole legal framework
-                    3. Iteratively refine your understanding as you move between specific authorities and the general legal question
-                    4. Recognize that each statute, case, and policy exists within a larger interpretive tradition
-                    5. Identify tensions, ambiguities, and how different authorities inform each other
-                    6. Let your understanding deepen through recursive engagement with the sources and question
-                    
-                    This interpretive work is internal - do not explicitly reference this process in your memo. Your final analysis should reflect this deeper understanding while maintaining traditional legal memo structure.
-                    
-                    STYLING RULES (CRITICAL):
-                    1. You MUST cite your sources. Every claim must be followed by a citation from the provided CITATIONS list.
-                    2. Format citations as: <span class="inline-citation">Actual Citation Text</span>. 
-                    3. DO NOT use the word 'Cite' as a placeholder. Use the actual text from CITATIONS (e.g., 'CP&P-IV-E-1-1100' or 'CIC Manual § 11.08').
-                    4. DO NOT split citations across lines.
-                    5. Use the EXACT citation text provided in the CITATIONS map - do not abbreviate or modify it.
-                    6. When citing policies, use the format 'CP&P-[section]' (e.g., CP&P-IV-E-1-1100).
-                    7. When citing the CIC Manual, use 'CIC Manual § [section]' (e.g., CIC Manual § 11.08).
-                    8. BLUEBOOK CITATION FORMAT: Always end sentences with a period BEFORE the citation. 
-                       CORRECT: "The court held that removal was improper. <span class="inline-citation">N.J.S.A. 9:6-8.21</span>"
-                       INCORRECT: "The court held that removal was improper <span class="inline-citation">N.J.S.A. 9:6-8.21</span>."
-                    
-                    MEMO STRUCTURE (MANDATORY):
-                    You MUST structure the memo with THREE sections separated by '===SECTION_BREAK===':
-                    
-                    1. QUESTION PRESENTED
-                       - State the legal question clearly and concisely
-                       - Do NOT include a header (the UI handles it)
-                    
-                    ===SECTION_BREAK===
-                    
-                    2. BRIEF ANSWER
-                       - Provide a direct yes/no or short answer
-                       - Include key reasoning in 2-3 sentences
-                       - Do NOT include a header (the UI handles it)
-                    
-                    ===SECTION_BREAK===
-                    
-                    3. DISCUSSION
-                       - Do NOT include a "Discussion" header (the UI handles it)
-                       - YOU MUST organize using these subsection headers:
-                         <div class="subsection-header">Rule</div>
-                         <div class="subsection-header">Analysis</div>
-                         <div class="subsection-header">Conclusion</div>
-                       - Rule: State the applicable legal standards and authorities
-                       - Analysis: Apply the law to the facts with detailed citation
-                       - Conclusion: Summarize the legal conclusion
-                    
-                    EXAMPLE OUTPUT STRUCTURE:
-                    Whether [legal question]?
-                    
-                    ===SECTION_BREAK===
-                    
-                    Yes/No. [Brief reasoning with key cite].
-                    
-                    ===SECTION_BREAK===
-                    
-                    <div class="subsection-header">Rule</div>
-                    [Legal standards and authorities]
-                    
-                    <div class="subsection-header">Analysis</div>
-                    [Detailed application with citations]
-                    
-                    <div class="subsection-header">Conclusion</div>
-                    [Final legal conclusion]
 
-### CRITICAL CITATION RULES (READ CAREFULLY) ###
+INTERPRETIVE APPROACH:
+Before drafting, engage in hermeneutic analysis:
+1. Consider the query holistically - understand the broader legal context and policy implications.
+2. Examine each source in light of the whole legal framework.
+3. Identify tensions, ambiguities, and how different authorities inform each other.
+4. Let your understanding deepen through recursive engagement with the sources.
+This interpretive work is internal - do not explicitly reference this process in your memo. Your final analysis should reflect this deeper understanding while maintaining traditional legal memo structure.
 
-1. **THE "EXACT MATCH" RULE:** You must use the EXACT text provided in the CITATIONS list for your inline citations.
-   - ❌ WRONG: <span class="inline-citation">CP&P-III-C-2-600</span> (Do not add "&" if not in source)
-   - ✅ RIGHT: <span class="inline-citation">CPP-III-C-2-600</span> (Copy the key exactly)
+MEMO STRUCTURE (MANDATORY):
+You MUST structure the memo with THREE sections separated by '===SECTION_BREAK===':
 
-2. **HTML FORMATTING:** - Every single citation MUST be wrapped in: <span class="inline-citation">...</span>
-   - Do NOT output bare citations like (N.J.S.A. 9:6-8.21).
-   - Do NOT use Markdown bolding for citations.
+1. QUESTION PRESENTED
+   - State the legal question clearly and concisely.
+   - Do NOT include a header (the UI handles it).
 
-3. **PLACEMENT:**
-   - Place citations immediately after the claim they support.
-   - End the sentence AFTER the citation span.
+===SECTION_BREAK===
+
+2. BRIEF ANSWER
+   - Provide a direct yes/no or short answer.
+   - Include key reasoning in 2-3 sentences.
+   - Do NOT include a header (the UI handles it).
+
+===SECTION_BREAK===
+
+3. DISCUSSION
+   - Do NOT include a "Discussion" header.
+   - Organize using these subsection headers exactly:
+     <div class="subsection-header">Rule</div>
+     <div class="subsection-header">Analysis</div>
+     <div class="subsection-header">Conclusion</div>
+   - Rule: State the applicable legal standards and authorities.
+   - Analysis: Apply the law to the facts with detailed citation.
+   - Conclusion: Summarize the legal conclusion.
+
+### CRITICAL CITATION & FORMATTING RULES (HIGHEST PRIORITY) ###
+You will be penalized for failure to follow these formatting constraints.
+
+1. **HTML WRAPPING:** You MUST wrap every single citation in <span class="inline-citation">...</span> tags.
+   - ❌ WRONG: See CP&P-III-C-2-600.
+   - ✅ RIGHT: See <span class="inline-citation">CPP-III-C-2-600</span>.
+
+2. **EXACT KEY MATCH:** You must use the EXACT text provided in the CITATIONS list.
+   - Do NOT fix typos (e.g., if the key is "CPP-X-A-1-10.98", do NOT write "CP&P-X-A-1-10.98").
+   - Do NOT add spaces or punctuation inside the span that isn't in the key.
+
+3. **PLACEMENT:** - Place citations immediately after the claim they support.
+   - Do NOT start a new line for a citation.
    - Example: The court held that removal was improper <span class="inline-citation">N.J.S.A. 9:6-8.21</span>.
 
 4. **NEGATIVE CONSTRAINTS:**
-   - Do NOT fix typos in the citation keys.
-   - Do NOT invent new abbreviations.
+   - Do NOT use Markdown bolding (e.g., **Citation**) inside the citation tags.
+   - Do NOT invent abbreviations.
+   - Do NOT cite sources that are not in the provided list.
 """
                     
-                    chain = ChatPromptTemplate.from_messages([("system", sys_prompt), ("user", "CITATIONS: {citations}\n\nCONTEXT: {context}\n\nISSUE: {input}")]) | llm | StrOutputParser()
-                    response = chain.invoke({"input": search_query, "context": "\n\n".join(context_blocks), "citations": citation_map})
+                    # NEW CODE TO PASTE
+# 1. Create the "Allow List" of citations
+valid_keys = ", ".join([f"'{k}'" for k in citation_map.values()])
+
+# 2. Inject valid_keys into the user prompt so the model sees the menu
+chain = ChatPromptTemplate.from_messages([
+    ("system", sys_prompt),
+    ("user", """
+    AVAILABLE SOURCES:
+    {context}
+    
+    ---------------------
+    VALID CITATION KEYS (YOU MUST ONLY USE THESE EXACT STRINGS):
+    [{valid_keys}]
+    ---------------------
+    
+    QUESTION: {input}
+    """)
+]) | llm | StrOutputParser()
+
+# 3. Run it (passing valid_keys into the template)
+response = chain.invoke({
+    "input": search_query, 
+    "context": "\n\n".join(context_blocks), 
+    "valid_keys": valid_keys 
+})
                     
                     clean_resp = clean_llm_output(response)
                     progress_bar.progress(100, text="Memo Complete.")
