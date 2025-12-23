@@ -155,12 +155,11 @@ def clean_llm_output(text: str) -> str:
     return text.strip()
 
 # --- HEADER CLEANER & CITATION ENFORCER ---
-def enforce_citations(text: str) -> str:
-    """Finds missed citations and wraps them in HTML span tags."""
-    
-    # 1. Existing Statute Pattern (Keep this)
-    statute_pattern = r'(?<!class="inline-citation">)(N\.J\.A\.C\.|N\.J\.S\.A\.|N\.J\.|N\.J\. Super\.)\s*(\d+[:\-]\d+[\d\-\.\w]*)'
-    text = re.sub(statute_pattern, r'<span class="inline-citation">\1 \2</span>', text, flags=re.IGNORECASE)
+# UPDATED Policy Pattern:
+    # Captures optional "DCF Policy Manual" prefix + the CP&P code
+    # Matches: "DCF Policy Manual CP&P-III-C-2-600" OR just "CP&P-III-C-2-600"
+    policy_pattern = r'(?<!class="inline-citation">)((?:DCF\s+Policy\s+Manual\s+)?CP[&]?P[-\s][IVX\d\-\w\.]+|Form\s+10-98)'
+    text = re.sub(policy_pattern, r'<span class="inline-citation">\1</span>', text, flags=re.IGNORECASE)
     
     # 2. UPDATED Policy Pattern (Catches CPP, CP&P, and Form 10-98 references)
     # This regex now allows for an optional '&' and handles the specific '10.98' format
@@ -528,22 +527,22 @@ You MUST structure the memo with THREE sections separated by '===SECTION_BREAK==
 ### CRITICAL CITATION & FORMATTING RULES (HIGHEST PRIORITY) ###
 You will be penalized for failure to follow these formatting constraints.
 
-1. **HTML WRAPPING:** You MUST wrap every single citation in <span class="inline-citation">...</span> tags.
-   - ❌ WRONG: See CP&P-III-C-2-600.
-   - ✅ RIGHT: See <span class="inline-citation">CPP-III-C-2-600</span>.
+1. **HTML WRAPPING:** You MUST wrap every single citation Key in <span class="inline-citation">...</span> tags.
 
-2. **EXACT KEY MATCH:** You must use the EXACT text provided in the CITATIONS list.
-   - Do NOT fix typos (e.g., if the key is "CPP-X-A-1-10.98", do NOT write "CP&P-X-A-1-10.98").
-   - Do NOT add spaces or punctuation inside the span that isn't in the key.
+2. **CITATION SENTENCES (THE "PERIOD" RULE):**
+   - Citations must act as standalone sentences.
+   - **Structure:** [Fact Sentence]. [Citation].
+   - **Example:** The form must be signed by the Worker. <span class="inline-citation">DCF Policy Manual CP&P-III-C-2-600</span>.
+   - **NOTE:** Ensure there is a period BEFORE the citation and a period AFTER the citation.
 
-3. **PLACEMENT:** - Place citations immediately after the claim they support.
-   - Do NOT start a new line for a citation.
-   - Example: The court held that removal was improper <span class="inline-citation">N.J.S.A. 9:6-8.21</span>.
+3. **EXACT KEY MATCH:**
+   - Use the keys provided in the "VALID KEYS" list.
+   - If the key is "CPP-X-A-1-10.98", you may add "DCF Policy Manual " before it inside the span if you prefer, BUT the key itself must remain intact.
+   - Acceptable: <span class="inline-citation">DCF Policy Manual CP&P-X-A-1-10.98</span>.
 
 4. **NEGATIVE CONSTRAINTS:**
-   - Do NOT use Markdown bolding (e.g., **Citation**) inside the citation tags.
-   - Do NOT invent abbreviations.
-   - Do NOT cite sources that are not in the provided list.
+   - Do NOT use Markdown bolding inside the citation tags.
+   - Do NOT start a new paragraph for a citation; keep it on the same line as the text it supports.
 """
 # --- 1. VALIDATION LOGIC ---
                     # Create a string list of valid keys to enforce strict adherence
