@@ -554,7 +554,26 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     
                     <div class="subsection-header">Conclusion</div>
                     [Final legal conclusion]
-                    """
+
+### CRITICAL CITATION RULES (READ CAREFULLY) ###
+
+1. **THE "EXACT MATCH" RULE:** You must use the EXACT text provided in the CITATIONS list for your inline citations.
+   - ❌ WRONG: <span class="inline-citation">CP&P-III-C-2-600</span> (Do not add "&" if not in source)
+   - ✅ RIGHT: <span class="inline-citation">CPP-III-C-2-600</span> (Copy the key exactly)
+
+2. **HTML FORMATTING:** - Every single citation MUST be wrapped in: <span class="inline-citation">...</span>
+   - Do NOT output bare citations like (N.J.S.A. 9:6-8.21).
+   - Do NOT use Markdown bolding for citations.
+
+3. **PLACEMENT:**
+   - Place citations immediately after the claim they support.
+   - End the sentence AFTER the citation span.
+   - Example: The court held that removal was improper <span class="inline-citation">N.J.S.A. 9:6-8.21</span>.
+
+4. **NEGATIVE CONSTRAINTS:**
+   - Do NOT fix typos in the citation keys.
+   - Do NOT invent new abbreviations.
+"""
                     
                     chain = ChatPromptTemplate.from_messages([("system", sys_prompt), ("user", "CITATIONS: {citations}\n\nCONTEXT: {context}\n\nISSUE: {input}")]) | llm | StrOutputParser()
                     response = chain.invoke({"input": search_query, "context": "\n\n".join(context_blocks), "citations": citation_map})
